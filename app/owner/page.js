@@ -68,6 +68,9 @@ export default function OwnerDashboard() {
   const [promotionsList, setPromotionsList] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  // State สำหรับ Pop-up ดูรายละเอียดและสลิปย้อนหลัง
+  const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
+
   const [staffMessages, setStaffMessages] = useState([]);
   const [selectedStaffMsg, setSelectedStaffMsg] = useState(null);
 
@@ -133,7 +136,8 @@ export default function OwnerDashboard() {
       const { data: rec } = await supabase.from('recipes').select('*').order('menu_name');
       if (rec) setRecipesList(rec);
 
-      const { data: logs } = await supabase.from('daily_sales').select('date, staff_name, total_cups, cash, qr, grab, lineman, updated_at').order('date', { ascending: false }).limit(20);
+      // ดึงข้อมูลประวัติครบทุกคอลัมน์เพื่อให้พรีวิวใน Modal และตารางได้สมบูรณ์
+      const { data: logs } = await supabase.from('daily_sales').select('*').order('date', { ascending: false }).limit(30);
       if (logs) setStaffLogs(logs);
     } catch (err) { console.error(err); }
     setLoading(false);
@@ -371,6 +375,58 @@ export default function OwnerDashboard() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-200 via-zinc-300 to-slate-400 text-slate-800 p-4 md:p-8">
 
+      {/* Pop-up สำหรับดูรายละเอียดแยกช่องทางและรูปสลิปย้อนหลัง */}
+      {selectedSaleDetail && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+              <div>
+                <h3 className="font-bold text-slate-800 text-base">📊 รายละเอียดการขายประจำวัน</h3>
+                <p className="text-xs text-slate-500">วันที่: {selectedSaleDetail.date}</p>
+              </div>
+              <button onClick={() => setSelectedSaleDetail(null)} className="bg-slate-100 hover:bg-slate-200 font-bold px-3 py-1 rounded-full text-xs">✕</button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border text-xs">
+              <div>พนักงานผู้บันทึก: <span className="font-bold">{selectedSaleDetail.staff_name || '-'}</span></div>
+              <div>แก้วรวม: <span className="font-bold">{selectedSaleDetail.total_cups || 0} แก้ว</span></div>
+              <div className="col-span-2">เงินสดจริงในลิ้นชัก: <span className="font-bold text-emerald-700">{(Number(selectedSaleDetail.actual_cash) || 0).toLocaleString()} ฿</span></div>
+            </div>
+
+            {/* ยอดแยกตามช่องทาง */}
+            <div className="space-y-1">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 ยอดแยกตามช่องทาง</h4>
+              <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-xl border">
+                <div>เงินสด: <span className="font-bold">{(Number(selectedSaleDetail.cash) || 0).toLocaleString()} ฿</span></div>
+                <div>QR Code: <span className="font-bold">{(Number(selectedSaleDetail.qr) || 0).toLocaleString()} ฿</span></div>
+                <div>Grab: <span className="font-bold">{(Number(selectedSaleDetail.grab) || 0).toLocaleString()} ฿</span></div>
+                <div>LineMan: <span className="font-bold">{(Number(selectedSaleDetail.lineman) || 0).toLocaleString()} ฿</span></div>
+                <div>GrabTH: <span className="font-bold">{(Number(selectedSaleDetail.grabth) || 0).toLocaleString()} ฿</span></div>
+                <div>LineManTH: <span className="font-bold">{(Number(selectedSaleDetail.linemanth) || 0).toLocaleString()} ฿</span></div>
+              </div>
+            </div>
+
+            {/* รูปสลิป */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📸 รูปสลิปหลักฐานจากพนักงาน</h4>
+              {Array.isArray(selectedSaleDetail.proof_images) && selectedSaleDetail.proof_images.length > 0 ? (
+                <div className="flex gap-2 flex-wrap">
+                  {selectedSaleDetail.proof_images.map((imgUrl, i) => (
+                    <a key={i} href={imgUrl} target="_blank" rel="noopener noreferrer" className="block w-24 h-24 rounded-lg overflow-hidden border shadow-sm">
+                      <img src={imgUrl} alt="slip" className="w-full h-full object-cover" />
+                    </a>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl text-center">ไม่มีรูปแนบในวันนี้</p>}
+            </div>
+
+            <div className="pt-2">
+              <button onClick={() => setSelectedSaleDetail(null)} className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">ปิดหน้าต่าง</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedStaffMsg && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-md w-full p-6 space-y-4">
@@ -529,6 +585,19 @@ export default function OwnerDashboard() {
                   <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm text-center"><p className="text-xs font-semibold text-slate-500 mb-1">ยอดขายรวม</p><p className="text-2xl font-black text-slate-800">{totalSales.toLocaleString()} บาท</p></div>
                   <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm text-center"><p className="text-xs font-semibold text-slate-500 mb-1">จำนวนแก้วรวม</p><p className="text-2xl font-black text-slate-800">{salesData.total_cups || 0} แก้ว</p></div>
                   <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm text-center"><p className="text-xs font-semibold text-slate-500 mb-1">เงินสดจริงในลิ้นชัก</p><p className="text-2xl font-black text-emerald-700">{(Number(salesData.actual_cash) || 0).toLocaleString()} บาท</p></div>
+                </div>
+
+                {/* แสดงยอดแยกช่องทางเด่นชัด */}
+                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 แยกยอดขายตามช่องทาง</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                    <div className="bg-slate-50 p-3 rounded-xl border">เงินสด: <span className="font-bold text-slate-800">{(Number(salesData.cash) || 0).toLocaleString()} ฿</span></div>
+                    <div className="bg-slate-50 p-3 rounded-xl border">QR Code: <span className="font-bold text-slate-800">{(Number(salesData.qr) || 0).toLocaleString()} ฿</span></div>
+                    <div className="bg-slate-50 p-3 rounded-xl border">Grab: <span className="font-bold text-slate-800">{(Number(salesData.grab) || 0).toLocaleString()} ฿</span></div>
+                    <div className="bg-slate-50 p-3 rounded-xl border">LineMan: <span className="font-bold text-slate-800">{(Number(salesData.lineman) || 0).toLocaleString()} ฿</span></div>
+                    <div className="bg-slate-50 p-3 rounded-xl border">GrabTH: <span className="font-bold text-slate-800">{(Number(salesData.grabth) || 0).toLocaleString()} ฿</span></div>
+                    <div className="bg-slate-50 p-3 rounded-xl border">LineManTH: <span className="font-bold text-slate-800">{(Number(salesData.linemanth) || 0).toLocaleString()} ฿</span></div>
+                  </div>
                 </div>
 
                 {Array.isArray(salesData.proof_images) && salesData.proof_images.length > 0 && (
@@ -842,24 +911,35 @@ export default function OwnerDashboard() {
 
         {activeTab === 'staff_logs' && (
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">ประวัติการทำงานย้อนหลัง</h2>
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">ประวัติการทำงานย้อนหลัง (คลิกแถวเพื่อดูรายละเอียดช่องทางและสลิป)</h2>
             <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="bg-slate-200 font-bold border-b border-slate-300">
-                    <th className="p-3">วันที่</th><th className="p-3">ผู้บันทึก</th><th className="p-3 text-center">แก้ว</th><th className="p-3 text-right">เงินสด</th><th className="p-3 text-right">QR/เดลิเวอรี</th>
+                    <th className="p-3">วันที่</th>
+                    <th className="p-3">ผู้บันทึก</th>
+                    <th className="p-3 text-center">แก้ว</th>
+                    <th className="p-3 text-right">เงินสด</th>
+                    <th className="p-3 text-right">QR/เดลิเวอรี</th>
+                    <th className="p-3 text-center">ตรวจสอบ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 font-medium">
-                  {staffLogs.map(log => (
-                    <tr key={log.date} className="hover:bg-slate-50">
-                      <td className="p-3">{log.date}</td>
-                      <td className="p-3 font-bold">{log.staff_name}</td>
-                      <td className="p-3 text-center">{log.total_cups || 0}</td>
-                      <td className="p-3 text-right text-emerald-700 font-bold">{(Number(log.cash) || 0).toLocaleString()} ฿</td>
-                      <td className="p-3 text-right">{((Number(log.qr) || 0) + (Number(log.grab) || 0) + (Number(log.lineman) || 0)).toLocaleString()} ฿</td>
-                    </tr>
-                  ))}
+                  {staffLogs.map(log => {
+                    const totalChannelSum = (Number(log.cash) || 0) + (Number(log.qr) || 0) + (Number(log.grab) || 0) + (Number(log.lineman) || 0) + (Number(log.grabth) || 0) + (Number(log.linemanth) || 0);
+                    return (
+                      <tr key={log.date} onClick={() => setSelectedSaleDetail(log)} className="hover:bg-slate-50 cursor-pointer transition">
+                        <td className="p-3">{log.date}</td>
+                        <td className="p-3 font-bold">{log.staff_name}</td>
+                        <td className="p-3 text-center">{log.total_cups || 0}</td>
+                        <td className="p-3 text-right text-emerald-700 font-bold">{(Number(log.cash) || 0).toLocaleString()} ฿</td>
+                        <td className="p-3 text-right">{totalChannelSum.toLocaleString()} ฿</td>
+                        <td className="p-3 text-center">
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg font-bold">🔍 ดูสลิป</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

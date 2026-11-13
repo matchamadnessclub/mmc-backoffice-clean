@@ -24,8 +24,10 @@ export default function StaffPage() {
   const [grabth, setGrabth] = useState('');
   const [linemanth, setLineManTH] = useState('');
   const [totalCups, setTotalCups] = useState('');
-  const [actualCash, setActualCash] = useState('');
+  
+  // เพิ่มเติม: รายจ่ายเงินสดหน้าร้าน
   const [expenses, setExpenses] = useState([{ name: '', amount: '' }]);
+
   const [proofImages, setProofImages] = useState([]);
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -66,10 +68,19 @@ export default function StaffPage() {
       if (data.staff_name) setStaffName(data.staff_name);
       setCash(data.cash ?? ''); setQr(data.qr ?? ''); setGrab(data.grab ?? '');
       setLineMan(data.lineman ?? ''); setGrabth(data.grabth ?? ''); setLineManTH(data.linemanth ?? '');
-      setTotalCups(data.total_cups ?? ''); setActualCash(data.actual_cash ?? '');
+      setTotalCups(data.total_cups ?? '');
+      if (Array.isArray(data.expenses) && data.expenses.length > 0) {
+        setExpenses(data.expenses);
+      }
       if (Array.isArray(data.proof_images)) setProofImages(data.proof_images);
     }
   }
+
+  // คำนวณรายจ่ายรวมทั้งหมด
+  const totalExpenses = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+
+  // คำนวณเงินสดในลิ้นชักอัตโนมัติ: (เงินสดที่ลูกค้าจ่าย) - (รายจ่ายหน้าร้าน)
+  const calculatedActualCash = (Number(cash) || 0) - totalExpenses;
 
   async function fetchIngredients() {
     const { data } = await supabase.from('ingredients').select('*').order('category');
@@ -128,7 +139,8 @@ export default function StaffPage() {
       grabth: Number(grabth) || 0,
       linemanth: Number(linemanth) || 0,
       total_cups: Number(totalCups) || 0,
-      actual_cash: Number(actualCash) || 0,
+      actual_cash: calculatedActualCash, // บันทึกยอดเงินสดในลิ้นชักที่หักลบรายจ่ายแล้วอัตโนมัติ
+      expenses: expenses.filter(exp => exp.name.trim() !== '' && Number(exp.amount) > 0), // บันทึกรายการจ่าย
       proof_images: proofImages,
       updated_at: new Date()
     };
@@ -136,7 +148,7 @@ export default function StaffPage() {
     const { error } = await supabase.from('daily_sales').upsert(payload, { onConflict: 'date' });
     if (!error) {
       localStorage.setItem('staff_name', staffName.trim());
-      alert('บันทึกยอดขายสำเร็จ!');
+      alert('บันทึกยอดขายและรายจ่ายสำเร็จ!');
     } else { alert('Error: ' + error.message); }
   }
 
@@ -243,7 +255,7 @@ export default function StaffPage() {
           <button onClick={() => setActiveTab('internal_chat')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'internal_chat' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>💬 แชททีมงาน</button>
         </div>
 
-        {/* TAB 1: ยอดขาย + แนบรูป */}
+        {/* TAB 1: ยอดขาย + รายจ่ายหน้าร้าน + แนบรูป */}
         {activeTab === 'sales' && (
           <form onSubmit={handleSaveSales} className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📝 บันทึกยอดขายประจำวัน</h2>
@@ -261,12 +273,45 @@ export default function StaffPage() {
                 <div><label className="text-xs text-slate-600 block mb-1">🛵 GrabTH</label><input type="number" step="0.01" value={grabth} onChange={(e) => setGrabth(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
                 <div><label className="text-xs text-slate-600 block mb-1">🛵 LineManTH</label><input type="number" step="0.01" value={linemanth} onChange={(e) => setLineManTH(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
               </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
-                <h3 className="text-xs font-bold text-slate-700 uppercase">สรุปยอด</h3>
-                <div><label className="text-xs text-slate-600 block mb-1">🥤 จำนวนแก้วรวม</label><input type="number" value={totalCups} onChange={(e) => setTotalCups(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm font-bold" /></div>
-                <div><label className="text-xs text-slate-600 block mb-1">💰 เงินสดจริงในลิ้นชัก</label><input type="number" step="0.01" value={actualCash} onChange={(e) => setActualCash(e.target.value)} className="w-full bg-emerald-50 border border-emerald-300 rounded-lg p-2 text-sm font-bold text-emerald-800" /></div>
+              
+              <div className="space-y-4">
+                {/* สรุปยอดแก้วและเงินสด */}
+                <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase">สรุปยอด</h3>
+                  <div><label className="text-xs text-slate-600 block mb-1">🥤 จำนวนแก้วรวม</label><input type="number" value={totalCups} onChange={(e) => setTotalCups(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm font-bold" /></div>
+                  <div>
+                    <label className="text-xs text-slate-600 block mb-1">💰 เงินสดจริงในลิ้นชัก (คำนวณอัตโนมัติ)</label>
+                    <input type="text" readOnly value={`${calculatedActualCash.toLocaleString()} บาท`} className="w-full bg-emerald-50 border border-emerald-300 rounded-lg p-2 text-sm font-bold text-emerald-800" />
+                    <p className="text-[10px] text-slate-400 mt-1">*มาจากเงินสดที่รับมารวม หักลบด้วยรายจ่ายหน้าร้านด้านล่าง</p>
+                  </div>
+                </div>
+
+                {/* บันทึกรายจ่ายเงินสดหน้าร้าน */}
+                <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-xs font-bold text-red-600 uppercase">💸 บันทึกรายจ่ายเงินสดหน้าร้าน</h3>
+                    <button type="button" onClick={() => setExpenses([...expenses, { name: '', amount: '' }])} className="text-xs bg-slate-700 text-white font-bold px-2.5 py-1 rounded-lg">+ เพิ่มรายการ</button>
+                  </div>
+                  {expenses.map((exp, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input type="text" placeholder="รายการ เช่น ซื้อน้ำแข็ง" value={exp.name} onChange={(e) => {
+                        const list = [...expenses]; list[idx].name = e.target.value; setExpenses(list);
+                      }} className="flex-1 bg-slate-50 border rounded-lg p-2 text-xs font-medium" />
+                      <input type="number" placeholder="จำนวนเงิน" value={exp.amount} onChange={(e) => {
+                        const list = [...expenses]; list[idx].amount = e.target.value; setExpenses(list);
+                      }} className="w-24 bg-slate-50 border rounded-lg p-2 text-xs font-medium" />
+                      {expenses.length > 1 && (
+                        <button type="button" onClick={() => setExpenses(expenses.filter((_, i) => i !== idx))} className="text-red-600 font-bold px-1">✕</button>
+                      )}
+                    </div>
+                  ))}
+                  {totalExpenses > 0 && (
+                    <p className="text-xs font-bold text-right text-red-600">รวมรายจ่ายหน้าร้าน: {totalExpenses.toLocaleString()} บาท</p>
+                  )}
+                </div>
               </div>
             </div>
+
             <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
               <h3 className="text-xs font-bold text-slate-700 uppercase">📸 แนบรูปหลักฐาน / สลิป (สูงสุด 3 รูป)</h3>
               <input type="file" accept="image/*" multiple onChange={handleImageUpload} disabled={uploadingImage || proofImages.length >= 3} className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-700 file:text-white cursor-pointer" />
