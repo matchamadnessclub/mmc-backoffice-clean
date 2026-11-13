@@ -15,7 +15,7 @@ export default function StaffPage() {
   const [activeTab, setActiveTab] = useState('sales'); // sales | stock | messages | internal_chat
   const [today] = useState(todayLocal());
 
-  // ฟอร์มยอดขาย
+  // ฟอร์มยอดขาย (ดึงค่าจาก localStorage ป้องกันข้อมูลหายเวลาสลับหน้า)
   const [staffName, setStaffName] = useState('');
   const [cash, setCash] = useState('');
   const [qr, setQr] = useState('');
@@ -49,6 +49,28 @@ export default function StaffPage() {
   useEffect(() => {
     const saved = localStorage.getItem('staff_name');
     if (saved) setStaffName(saved);
+
+    // โหลดข้อมูลที่พิมพ์ค้างไว้ชั่วคราว
+    const savedCash = localStorage.getItem('draft_cash');
+    const savedQr = localStorage.getItem('draft_qr');
+    const savedGrab = localStorage.getItem('draft_grab');
+    const savedLineMan = localStorage.getItem('draft_lineman');
+    const savedGrabth = localStorage.getItem('draft_grabth');
+    const savedLineManTH = localStorage.getItem('draft_linemanth');
+    const savedCups = localStorage.getItem('draft_total_cups');
+    const savedImages = localStorage.getItem('draft_proof_images');
+
+    if (savedCash) setCash(savedCash);
+    if (savedQr) setQr(savedQr);
+    if (savedGrab) setGrab(savedGrab);
+    if (savedLineMan) setLineMan(savedLineMan);
+    if (savedGrabth) setGrabth(savedGrabth);
+    if (savedLineManTH) setLineManTH(savedLineManTH);
+    if (savedCups) setTotalCups(savedCups);
+    if (savedImages) {
+      try { setProofImages(JSON.parse(savedImages)); } catch (e) {}
+    }
+
     fetchIngredients();
     fetchStaffMessages();
     fetchExistingSales();
@@ -62,26 +84,39 @@ export default function StaffPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  // บันทึก Draft ลง localStorage ทุกครั้งที่มีการเปลี่ยนแปลง เพื่อไม่ให้ข้อมูลหายเวลาสลับหน้า
+  useEffect(() => { localStorage.setItem('draft_cash', cash); }, [cash]);
+  useEffect(() => { localStorage.setItem('draft_qr', qr); }, [qr]);
+  useEffect(() => { localStorage.setItem('draft_grab', grab); }, [grab]);
+  useEffect(() => { localStorage.setItem('draft_lineman', lineman); }, [lineman]);
+  useEffect(() => { localStorage.setItem('draft_grabth', grabth); }, [grabth]);
+  useEffect(() => { localStorage.setItem('draft_linemanth', linemanth); }, [linemanth]);
+  useEffect(() => { localStorage.setItem('draft_total_cups', totalCups); }, [totalCups]);
+  useEffect(() => { localStorage.setItem('draft_proof_images', JSON.stringify(proofImages)); }, [proofImages]);
+
   async function fetchExistingSales() {
     const { data } = await supabase.from('daily_sales').select('*').eq('date', today).maybeSingle();
     if (data) {
       if (data.staff_name) setStaffName(data.staff_name);
-      setCash(data.cash ?? ''); setQr(data.qr ?? ''); setGrab(data.grab ?? '');
-      setLineMan(data.lineman ?? ''); setGrabth(data.grabth ?? ''); setLineManTH(data.linemanth ?? '');
-      setTotalCups(data.total_cups ?? '');
-      if (Array.isArray(data.proof_images)) setProofImages(data.proof_images);
+      // ถ้ายังไม่มีการพิมพ์ Draft ค้างไว้ ให้ดึงจาก DB มาแสดง
+      if (!cash && data.cash !== null) setCash(data.cash ?? '');
+      if (!qr && data.qr !== null) setQr(data.qr ?? '');
+      if (!grab && data.grab !== null) setGrab(data.grab ?? '');
+      if (!lineman && data.lineman !== null) setLineMan(data.lineman ?? '');
+      if (!grabth && data.grabth !== null) setGrabth(data.grabth ?? '');
+      if (!linemanth && data.linemanth !== null) setLineManTH(data.linemanth ?? '');
+      if (!totalCups && data.total_cups !== null) setTotalCups(data.total_cups ?? '');
+      if (Array.isArray(data.proof_images) && data.proof_images.length > 0 && proofImages.length === 0) {
+        setProofImages(data.proof_images);
+      }
     }
-    // ดึงข้อมูลรายจ่ายของวันนี้จากตาราง expenses มาแสดง
     const { data: expData } = await supabase.from('expenses').select('*').eq('date', today);
     if (expData && expData.length > 0) {
       setExpenses(expData.map(e => ({ name: e.name || e.expense_name || '', amount: e.amount || e.price || '' })));
     }
   }
 
-  // คำนวณรายจ่ายรวมทั้งหมด
   const totalExpenses = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-
-  // คำนวณเงินสดในลิ้นชักอัตโนมัติ: (เงินสดที่รับมา) - (รายจ่ายหน้าร้าน)
   const calculatedActualCash = (Number(cash) || 0) - totalExpenses;
 
   async function fetchIngredients() {
@@ -131,7 +166,6 @@ export default function StaffPage() {
     e.preventDefault();
     if (!staffName.trim()) { alert('กรุณากรอกชื่อพนักงาน'); return; }
 
-    // 1. บันทึกยอดขายลงตาราง daily_sales
     const salesPayload = {
       date: today,
       staff_name: staffName.trim(),
@@ -150,7 +184,6 @@ export default function StaffPage() {
     const { error: salesError } = await supabase.from('daily_sales').upsert(salesPayload, { onConflict: 'date' });
     if (salesError) { alert('Error saving sales: ' + salesError.message); return; }
 
-    // 2. จัดการบันทึกรายจ่ายลงตาราง expenses (ลบของเก่าวันนี้ออกก่อนแล้วใส่ใหม่เพื่อความสะอาด)
     await supabase.from('expenses').delete().eq('date', today);
     const validExpenses = expenses.filter(exp => exp.name.trim() !== '' && Number(exp.amount) > 0);
     if (validExpenses.length > 0) {
@@ -164,6 +197,17 @@ export default function StaffPage() {
     }
 
     localStorage.setItem('staff_name', staffName.trim());
+
+    // ล้าง Draft ใน localStorage หลังจากบันทึกสำเร็จเรียบร้อย
+    localStorage.removeItem('draft_cash');
+    localStorage.removeItem('draft_qr');
+    localStorage.removeItem('draft_grab');
+    localStorage.removeItem('draft_lineman');
+    localStorage.removeItem('draft_grabth');
+    localStorage.removeItem('draft_linemanth');
+    localStorage.removeItem('draft_total_cups');
+    localStorage.removeItem('draft_proof_images');
+
     alert('บันทึกยอดขายและรายจ่ายสำเร็จ!');
   }
 
