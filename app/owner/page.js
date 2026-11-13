@@ -62,6 +62,7 @@ export default function OwnerDashboard() {
   const [activeTab, setActiveTab] = useState('sales'); 
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [salesData, setSalesData] = useState(null);
+  const [expensesData, setExpensesData] = useState([]); // เพิ่มตัวแปรเก็บรายจ่าย
   const [ingredients, setIngredients] = useState([]);
   const [recipesList, setRecipesList] = useState([]);
   const [staffLogs, setStaffLogs] = useState([]);
@@ -130,13 +131,16 @@ export default function OwnerDashboard() {
       const { data: sales } = await supabase.from('daily_sales').select('*').eq('date', selectedDate).maybeSingle();
       setSalesData(sales || null);
 
+      // ดึงข้อมูลรายจ่ายหน้าร้านของวันที่เลือก
+      const { data: exp } = await supabase.from('expenses').select('*').eq('date', selectedDate);
+      setExpensesData(exp || []);
+
       const { data: ing } = await supabase.from('ingredients').select('*').order('category', { ascending: true });
       if (ing) setIngredients(ing);
 
       const { data: rec } = await supabase.from('recipes').select('*').order('menu_name');
       if (rec) setRecipesList(rec);
 
-      // ดึงข้อมูลประวัติครบทุกคอลัมน์เพื่อให้พรีวิวใน Modal และตารางได้สมบูรณ์
       const { data: logs } = await supabase.from('daily_sales').select('*').order('date', { ascending: false }).limit(30);
       if (logs) setStaffLogs(logs);
     } catch (err) { console.error(err); }
@@ -344,6 +348,7 @@ export default function OwnerDashboard() {
   }
 
   const totalSales = salesData ? ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(salesData[k]) || 0), 0) : 0;
+  const totalExpensesAmount = expensesData.reduce((sum, item) => sum + (Number(item.amount) || Number(item.price) || 0), 0);
 
   function getFilteredStock(cat) {
     const q = searchStockQuery.trim().toLowerCase();
@@ -598,6 +603,26 @@ export default function OwnerDashboard() {
                     <div className="bg-slate-50 p-3 rounded-xl border">GrabTH: <span className="font-bold text-slate-800">{(Number(salesData.grabth) || 0).toLocaleString()} ฿</span></div>
                     <div className="bg-slate-50 p-3 rounded-xl border">LineManTH: <span className="font-bold text-slate-800">{(Number(salesData.linemanth) || 0).toLocaleString()} ฿</span></div>
                   </div>
+                </div>
+
+                {/* รายการรายจ่ายเงินสดหน้าร้าน */}
+                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
+                  <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">💸 รายจ่ายเงินสดหน้าร้าน</h3>
+                  {expensesData.length > 0 ? (
+                    <div className="space-y-2">
+                      {expensesData.map((exp, idx) => (
+                        <div key={idx} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border text-xs">
+                          <span className="font-bold text-slate-700">• {exp.name || exp.expense_name}</span>
+                          <span className="font-bold text-red-600">{(Number(exp.amount) || Number(exp.price) || 0).toLocaleString()} ฿</span>
+                        </div>
+                      ))}
+                      <div className="text-right text-xs font-bold text-red-600 pt-1">
+                        รวมรายจ่ายหน้าร้านทั้งสิ้น: {totalExpensesAmount.toLocaleString()} ฿
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl text-center">ไม่มีรายจ่ายหน้าร้านในวันนี้</p>
+                  )}
                 </div>
 
                 {Array.isArray(salesData.proof_images) && salesData.proof_images.length > 0 && (

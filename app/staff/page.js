@@ -25,7 +25,7 @@ export default function StaffPage() {
   const [linemanth, setLineManTH] = useState('');
   const [totalCups, setTotalCups] = useState('');
   
-  // เพิ่มเติม: รายจ่ายเงินสดหน้าร้าน
+  // รายจ่ายเงินสดหน้าร้าน
   const [expenses, setExpenses] = useState([{ name: '', amount: '' }]);
 
   const [proofImages, setProofImages] = useState([]);
@@ -69,17 +69,19 @@ export default function StaffPage() {
       setCash(data.cash ?? ''); setQr(data.qr ?? ''); setGrab(data.grab ?? '');
       setLineMan(data.lineman ?? ''); setGrabth(data.grabth ?? ''); setLineManTH(data.linemanth ?? '');
       setTotalCups(data.total_cups ?? '');
-      if (Array.isArray(data.expenses) && data.expenses.length > 0) {
-        setExpenses(data.expenses);
-      }
       if (Array.isArray(data.proof_images)) setProofImages(data.proof_images);
+    }
+    // ดึงข้อมูลรายจ่ายของวันนี้จากตาราง expenses มาแสดง
+    const { data: expData } = await supabase.from('expenses').select('*').eq('date', today);
+    if (expData && expData.length > 0) {
+      setExpenses(expData.map(e => ({ name: e.name || e.expense_name || '', amount: e.amount || e.price || '' })));
     }
   }
 
   // คำนวณรายจ่ายรวมทั้งหมด
   const totalExpenses = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 
-  // คำนวณเงินสดในลิ้นชักอัตโนมัติ: (เงินสดที่ลูกค้าจ่าย) - (รายจ่ายหน้าร้าน)
+  // คำนวณเงินสดในลิ้นชักอัตโนมัติ: (เงินสดที่รับมา) - (รายจ่ายหน้าร้าน)
   const calculatedActualCash = (Number(cash) || 0) - totalExpenses;
 
   async function fetchIngredients() {
@@ -129,7 +131,8 @@ export default function StaffPage() {
     e.preventDefault();
     if (!staffName.trim()) { alert('กรุณากรอกชื่อพนักงาน'); return; }
 
-    const payload = {
+    // 1. บันทึกยอดขายลงตาราง daily_sales
+    const salesPayload = {
       date: today,
       staff_name: staffName.trim(),
       cash: Number(cash) || 0,
@@ -139,17 +142,29 @@ export default function StaffPage() {
       grabth: Number(grabth) || 0,
       linemanth: Number(linemanth) || 0,
       total_cups: Number(totalCups) || 0,
-      actual_cash: calculatedActualCash, // บันทึกยอดเงินสดในลิ้นชักที่หักลบรายจ่ายแล้วอัตโนมัติ
-      expenses: expenses.filter(exp => exp.name.trim() !== '' && Number(exp.amount) > 0), // บันทึกรายการจ่าย
+      actual_cash: calculatedActualCash,
       proof_images: proofImages,
       updated_at: new Date()
     };
 
-    const { error } = await supabase.from('daily_sales').upsert(payload, { onConflict: 'date' });
-    if (!error) {
-      localStorage.setItem('staff_name', staffName.trim());
-      alert('บันทึกยอดขายและรายจ่ายสำเร็จ!');
-    } else { alert('Error: ' + error.message); }
+    const { error: salesError } = await supabase.from('daily_sales').upsert(salesPayload, { onConflict: 'date' });
+    if (salesError) { alert('Error saving sales: ' + salesError.message); return; }
+
+    // 2. จัดการบันทึกรายจ่ายลงตาราง expenses (ลบของเก่าวันนี้ออกก่อนแล้วใส่ใหม่เพื่อความสะอาด)
+    await supabase.from('expenses').delete().eq('date', today);
+    const validExpenses = expenses.filter(exp => exp.name.trim() !== '' && Number(exp.amount) > 0);
+    if (validExpenses.length > 0) {
+      const expensePayloads = validExpenses.map(exp => ({
+        date: today,
+        name: exp.name.trim(),
+        amount: Number(exp.amount) || 0,
+        staff_name: staffName.trim()
+      }));
+      await supabase.from('expenses').insert(expensePayloads);
+    }
+
+    localStorage.setItem('staff_name', staffName.trim());
+    alert('บันทึกยอดขายและรายจ่ายสำเร็จ!');
   }
 
   async function handleSaveStock() {
