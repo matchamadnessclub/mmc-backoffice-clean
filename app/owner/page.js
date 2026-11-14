@@ -63,6 +63,7 @@ export default function OwnerDashboard() {
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [salesData, setSalesData] = useState(null);
   const [expensesData, setExpensesData] = useState([]);
+  const [allSalesHistory, setAllSalesHistory] = useState([]); // เก็บประวัติยอดขายทั้งหมดสำหรับทำสรุปและวิเคราะห์
   const [ingredients, setIngredients] = useState([]);
   const [recipesList, setRecipesList] = useState([]);
   const [staffLogs, setStaffLogs] = useState([]);
@@ -113,16 +114,23 @@ export default function OwnerDashboard() {
     fetchPromotions();
     fetchStaffMessages();
     fetchInternalMessages();
+    fetchAllSalesHistory();
 
     const channel = supabase.channel('owner-dashboard-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_messages' }, () => fetchStaffMessages())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'internal_messages' }, () => fetchInternalMessages())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'daily_sales' }, () => fetchAllSalesHistory())
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, []);
 
   useEffect(() => { fetchOwnerData(); }, [selectedDate]);
+
+  async function fetchAllSalesHistory() {
+    const { data } = await supabase.from('daily_sales').select('*').order('date', { ascending: false });
+    if (data) setAllSalesHistory(data);
+  }
 
   async function fetchOwnerData() {
     setLoading(true);
@@ -348,6 +356,37 @@ export default function OwnerDashboard() {
   const totalSales = salesData ? ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(salesData[k]) || 0), 0) : 0;
   const totalExpensesAmount = expensesData.reduce((sum, item) => sum + (Number(item.amount) || Number(item.price) || 0), 0);
 
+  // คำนวณยอดวิเคราะห์ (รายวัน, รายสัปดาห์, รายเดือน, รายปี) จาก allSalesHistory
+  const now = new Date();
+  const todayStr = todayLocal();
+  const currentYear = now.getFullYear().toString();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+  const todayRecord = allSalesHistory.find(s => s.date === todayStr);
+  const todaySalesSum = todayRecord ? ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(todayRecord[k]) || 0), 0) : 0;
+  const todayCupsSum = todayRecord ? Number(todayRecord.total_cups) || 0 : 0;
+
+  // รายเดือน (เดือนปัจจุบัน)
+  const monthRecords = allSalesHistory.filter(s => s.date && s.date.startsWith(currentMonth));
+  const monthSalesSum = monthRecords.reduce((acc, curr) => acc + ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(curr[k]) || 0), 0), 0);
+  const monthCupsSum = monthRecords.reduce((acc, curr) => acc + (Number(curr.total_cups) || 0), 0);
+
+  // รายปี (ปีปัจจุบัน)
+  const yearRecords = allSalesHistory.filter(s => s.date && s.date.startsWith(currentYear));
+  const yearSalesSum = yearRecords.reduce((acc, curr) => acc + ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(curr[k]) || 0), 0), 0);
+  const yearCupsSum = yearRecords.reduce((acc, curr) => acc + (Number(curr.total_cups) || 0), 0);
+
+  // รายสัปดาห์ (ย้อนหลัง 7 วันล่าสุด)
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(now.getDate() - 6);
+  const weekRecords = allSalesHistory.filter(s => {
+    if (!s.date) return false;
+    const d = new Date(s.date);
+    return d >= sevenDaysAgo && d <= now;
+  });
+  const weekSalesSum = weekRecords.reduce((acc, curr) => acc + ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(curr[k]) || 0), 0), 0);
+  const weekCupsSum = weekRecords.reduce((acc, curr) => acc + (Number(curr.total_cups) || 0), 0);
+
   function getFilteredStock(cat) {
     const q = searchStockQuery.trim().toLowerCase();
     return ingredients
@@ -548,7 +587,7 @@ export default function OwnerDashboard() {
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-white/90 px-3 py-2 rounded-xl border border-slate-300 shadow-sm">
-              <label className="text-xs font-bold text-slate-700">📅 วันที่:</label>
+              <label className="text-xs font-bold text-slate-700">📅 เลือกดูวันที่:</label>
               <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="bg-transparent text-sm font-semibold outline-none cursor-pointer" />
             </div>
 
@@ -573,12 +612,14 @@ export default function OwnerDashboard() {
           <button onClick={() => setActiveTab('staff_logs')} className={tabClass('staff_logs', activeTab)}>👥 ประวัติ</button>
         </div>
 
+        {/* TAB 1: ยอดขาย (เพิ่มรายการย้อนหลังเรียงลงมา + โมดัลคลิกดูรายละเอียด + วิเคราะห์ยอดขายด้านล่าง) */}
         <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center gap-2 flex-wrap">
               <h2 className="font-bold text-lg text-slate-800">สรุปยอดขายประจำวัน ({selectedDate})</h2>
               <span className="text-xs bg-slate-300 text-slate-800 px-3 py-1 rounded-full font-bold border border-slate-400">พนักงานผู้บันทึก: {salesData?.staff_name || 'ยังไม่บันทึก'}</span>
             </div>
+
             {loading ? <p className="text-center text-slate-500 py-8">กำลังโหลด...</p> : salesData ? (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -631,16 +672,82 @@ export default function OwnerDashboard() {
                   </div>
                 )}
               </div>
-            ) : <div className="text-center py-12 text-slate-500 font-medium">ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก</div>}
+            ) : <div className="text-center py-10 text-slate-500 font-medium bg-white rounded-xl border border-slate-300 p-6">ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก ({selectedDate})</div>}
+
+            {/* ส่วนประวัติยอดขายย้อนหลังเรียงลงมา */}
+            <div className="space-y-3 pt-4 border-t border-slate-300">
+              <h3 className="font-bold text-base text-slate-800">📋 รายการยอดขายย้อนหลังทั้งหมด (คลิกแถวเพื่อดูรายละเอียด & สลิป)</h3>
+              <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-x-auto max-h-80 overflow-y-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 bg-slate-200 font-bold border-b border-slate-300 z-10">
+                    <tr>
+                      <th className="p-3">วันที่</th>
+                      <th className="p-3">ผู้บันทึก</th>
+                      <th className="p-3 text-center">แก้วรวม</th>
+                      <th className="p-3 text-right">ยอดขายรวม</th>
+                      <th className="p-3 text-center">ดูรายละเอียด</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 font-medium">
+                    {allSalesHistory.length > 0 ? allSalesHistory.map(row => {
+                      const rowTotal = ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(row[k]) || 0), 0);
+                      return (
+                        <tr key={row.date} onClick={() => setSelectedSaleDetail(row)} className="hover:bg-slate-50 cursor-pointer transition">
+                          <td className="p-3 font-bold">{row.date}</td>
+                          <td className="p-3">{row.staff_name || '-'}</td>
+                          <td className="p-3 text-center">{row.total_cups || 0} แก้ว</td>
+                          <td className="p-3 text-right font-black text-emerald-700">{rowTotal.toLocaleString()} ฿</td>
+                          <td className="p-3 text-center">
+                            <span className="text-xs bg-slate-800 text-white px-3 py-1 rounded-lg font-bold">🔍 เปิดดู</span>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr><td colSpan="5" className="text-center py-8 text-slate-400">ยังไม่มีประวัติการขายในระบบ</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* ส่วนวิเคราะห์ยอดขายด้านล่างสุด */}
+            <div className="space-y-4 pt-6 border-t-2 border-slate-300">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📈</span>
+                <h3 className="font-black text-lg text-slate-800 uppercase tracking-wide">รายงานวิเคราะห์ยอดขาย (Sales Analytics)</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
+                  <p className="text-xs font-bold text-slate-500 uppercase">📅 วันนี้ ({todayStr})</p>
+                  <p className="text-xl font-black text-slate-800">{todaySalesSum.toLocaleString()} ฿</p>
+                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{todayCupsSum} แก้ว</span></p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
+                  <p className="text-xs font-bold text-slate-500 uppercase">📊 7 วันล่าสุด (สัปดาห์นี้)</p>
+                  <p className="text-xl font-black text-slate-800">{weekSalesSum.toLocaleString()} ฿</p>
+                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{weekCupsSum} แก้ว</span></p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
+                  <p className="text-xs font-bold text-slate-500 uppercase">🗓️ เดือนนี้ ({currentMonth})</p>
+                  <p className="text-xl font-black text-slate-800">{monthSalesSum.toLocaleString()} ฿</p>
+                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{monthCupsSum} แก้ว</span></p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
+                  <p className="text-xs font-bold text-slate-500 uppercase">🏆 ปีนี้ ({currentYear})</p>
+                  <p className="text-xl font-black text-slate-800">{yearSalesSum.toLocaleString()} ฿</p>
+                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{yearCupsSum} แก้ว</span></p>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
 
-        {/* TAB 2: สต็อก (เพิ่มกล่องสรุปวัตถุดิบใกล้หมดด้านบนสุด) */}
+        {/* TAB 2: สต็อก */}
         <div className={activeTab === 'ingredients' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก</h2>
 
-            {/* กล่องสรุปสต็อกใกล้หมดให้ดูก่อน */}
             {lowStockItems.length > 0 && (
               <div className="bg-red-50 border-2 border-red-300 p-4 rounded-2xl shadow-sm space-y-3">
                 <div className="flex items-center gap-2">
