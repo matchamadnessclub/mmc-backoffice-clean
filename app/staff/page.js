@@ -11,8 +11,13 @@ function todayLocal() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function getYesterdayLocal() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function StaffPage() {
-  // ควบคุมการแสดงผลแต่ละแท็บด้วย CSS (hidden) แทนการใช้เงื่อนไข && เพื่อไม่ให้ State หรือรูปภาพที่แนบไว้ถูกล้างทิ้งตอนสลับหน้า
   const [activeTab, setActiveTab] = useState('sales'); 
   const [today] = useState(todayLocal());
 
@@ -31,6 +36,7 @@ export default function StaffPage() {
 
   const [ingredients, setIngredients] = useState([]);
   const [stockCounts, setStockCounts] = useState({});
+  const [yesterdayActualCash, setYesterdayActualCash] = useState(0);
 
   const [msgTopic, setMsgTopic] = useState(TOPICS[0]);
   const [messageText, setMessageText] = useState('');
@@ -60,8 +66,19 @@ export default function StaffPage() {
       fetchExistingSales(),
       fetchIngredients(),
       fetchStaffMessages(),
-      fetchInternalMessages()
+      fetchInternalMessages(),
+      fetchYesterdayCash()
     ]);
+  }
+
+  async function fetchYesterdayCash() {
+    const yDate = getYesterdayLocal();
+    const { data } = await supabase.from('daily_sales').select('actual_cash').eq('date', yDate).maybeSingle();
+    if (data && data.actual_cash !== null) {
+      setYesterdayActualCash(Number(data.actual_cash) || 0);
+    } else {
+      setYesterdayActualCash(0);
+    }
   }
 
   async function fetchExistingSales() {
@@ -84,14 +101,15 @@ export default function StaffPage() {
   }
 
   const totalExpenses = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  const calculatedActualCash = (Number(cash) || 0) - totalExpenses;
+  
+  // คำนวณเงินสดทั้งหมดในลิ้นชัก: (เงินสดตั้งต้นยกมาจากเมื่อวาน + เงินสดรับใหม่วันนี้) - รายจ่ายหน้าร้านวันนี้
+  const calculatedActualCash = yesterdayActualCash + (Number(cash) || 0) - totalExpenses;
 
   async function fetchIngredients() {
     const { data } = await supabase.from('ingredients').select('*').order('category');
     if (data) {
       setIngredients(data);
       const map = {};
-      // แก้ไขให้ดึงค่าสต็อกล่าสุดมาแสดงตรงช่องนับเสมอ ไม่ให้ค้างค่าเก่าผิดพลาด
       data.forEach(i => { map[i.id] = i.current_stock ?? i.total_unit ?? ''; });
       setStockCounts(map);
     }
@@ -130,10 +148,12 @@ export default function StaffPage() {
     setUploadingImage(false);
   }
 
-  async function handleSaveSales(e) {
+  // กดปุ่มบันทึกยอดขายครั้งเดียว บันทึกทั้ง ยอดขาย, รายจ่าย, รูป และ สต็อก พร้อมกันทันที
+  async function handleSaveAll(e) {
     e.preventDefault();
     if (!staffName.trim()) { alert('กรุณากรอกชื่อพนักงาน'); return; }
 
+    // 1. บันทึกยอดขาย
     const salesPayload = {
       date: today,
       staff_name: staffName.trim(),
@@ -152,6 +172,7 @@ export default function StaffPage() {
     const { error: salesError } = await supabase.from('daily_sales').upsert(salesPayload, { onConflict: 'date' });
     if (salesError) { alert('Error saving sales: ' + salesError.message); return; }
 
+    // 2. บันทึกรายจ่าย
     await supabase.from('expenses').delete().eq('date', today);
     const validExpenses = expenses.filter(exp => exp.name.trim() !== '' && Number(exp.amount) > 0);
     if (validExpenses.length > 0) {
@@ -164,14 +185,8 @@ export default function StaffPage() {
       await supabase.from('expenses').insert(expensePayloads);
     }
 
-    localStorage.setItem('staff_name', staffName.trim());
-    alert('บันทึกยอดขายและรายจ่ายสำเร็จ!');
-  }
-
-  async function handleSaveStock() {
-    if (!staffName.trim()) { alert('กรุณากรอกชื่อพนักงานก่อนบันทึกสต็อก'); return; }
+    // 3. บันทึกสต็อก
     let abnormal = [];
-
     for (const ing of ingredients) {
       const newStock = Number(stockCounts[ing.id]);
       if (isNaN(newStock)) continue;
@@ -190,11 +205,11 @@ export default function StaffPage() {
         message: `พนักงาน (${staffName.trim()}) บันทึกสต็อกผิดปกติ:\n- ${abnormal.join('\n- ')}`,
         is_read: false
       }]);
-      alert('บันทึกสต็อกแล้ว แต่ระบบตรวจพบความผิดปกติ จึงส่งแจ้งเตือนด่วนถึงเจ้าของแล้วครับ!');
-    } else {
-      alert('บันทึกสต็อกสำเร็จ สต็อกปกติ!');
     }
-    fetchIngredients();
+
+    localStorage.setItem('staff_name', staffName.trim());
+    alert('บันทึกยอดขาย รายจ่าย และอัปเดตสต็อกสำเร็จเรียบร้อย!');
+    fetchIngredients(); // รีเฟรชสต็อกหลังบันทึก
   }
 
   async function handleSendMessage(e) {
@@ -265,114 +280,114 @@ export default function StaffPage() {
 
         {/* Tab พนักงาน */}
         <div className="flex bg-slate-300/80 p-1.5 rounded-2xl shadow-inner border border-slate-400 gap-1 text-xs md:text-sm overflow-x-auto">
-          <button onClick={() => setActiveTab('sales')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'sales' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>📊 ยอดขาย</button>
-          <button onClick={() => setActiveTab('stock')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'stock' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>📦 นับสต็อก</button>
+          <button onClick={() => setActiveTab('sales')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'sales' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>📊 ยอดขาย & สต็อก</button>
           <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'messages' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>💬 แจ้งเจ้าของ</button>
           <button onClick={() => setActiveTab('internal_chat')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'internal_chat' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>💬 แชททีมงาน</button>
         </div>
 
-        {/* TAB 1: ยอดขาย + รายจ่ายหน้าร้าน + แนบรูป (ใช้ hidden class เพื่อคงสถานะรูปและข้อมูลไม่ให้หายเวลาสลับแท็บ) */}
+        {/* TAB 1: ฟอร์มรวมยอดขาย + รายจ่าย + สต็อก (กดปุ่มบันทึกครั้งเดียวจบ) */}
         <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
-          <form onSubmit={handleSaveSales} className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📝 บันทึกยอดขายประจำวัน</h2>
-            <div>
-              <label className="block text-xs font-bold text-slate-600 mb-1">ชื่อพนักงาน</label>
-              <input type="text" placeholder="น้องบี" value={staffName} onChange={(e) => setStaffName(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <form onSubmit={handleSaveAll} className="space-y-6">
+            <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
+              <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📝 บันทึกยอดขายประจำวัน</h2>
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">ชื่อพนักงาน</label>
+                <input type="text" placeholder="น้องบี" value={staffName} onChange={(e) => setStaffName(e.target.value)} className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase">ช่องทางการขาย</h3>
+                  <div><label className="text-xs text-slate-600 block mb-1">💵 เงินสด</label><input type="number" step="0.01" value={cash} onChange={(e) => setCash(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
+                  <div><label className="text-xs text-slate-600 block mb-1">📱 QR Code</label><input type="number" step="0.01" value={qr} onChange={(e) => setQr(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
+                  <div><label className="text-xs text-slate-600 block mb-1">🛵 Grab</label><input type="number" step="0.01" value={grab} onChange={(e) => setGrab(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
+                  <div><label className="text-xs text-slate-600 block mb-1">🛵 LineMan</label><input type="number" step="0.01" value={lineman} onChange={(e) => setLineMan(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
+                  <div><label className="text-xs text-slate-600 block mb-1">🛵 GrabTH</label><input type="number" step="0.01" value={grabth} onChange={(e) => setGrabth(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
+                  <div><label className="text-xs text-slate-600 block mb-1">🛵 LineManTH</label><input type="number" step="0.01" value={linemanth} onChange={(e) => setLineManTH(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
+                    <h3 className="text-xs font-bold text-slate-700 uppercase">สรุปยอด</h3>
+                    <div><label className="text-xs text-slate-600 block mb-1">🥤 จำนวนแก้วรวม</label><input type="number" value={totalCups} onChange={(e) => setTotalCups(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm font-bold" /></div>
+                    <div>
+                      <label className="text-xs text-slate-600 block mb-1">💰 เงินสดทั้งหมดในลิ้นชัก (คำนวณอัตโนมัติ)</label>
+                      <input type="text" readOnly value={`${calculatedActualCash.toLocaleString()} บาท`} className="w-full bg-emerald-50 border border-emerald-300 rounded-lg p-2 text-sm font-bold text-emerald-800" />
+                      <p className="text-[10px] text-slate-400 mt-1">*มาจากเงินสดตั้งต้น (วันก่อนหน้า) + เงินสดรับใหม่ - รายจ่ายหน้าร้าน</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-xs font-bold text-red-600 uppercase">💸 บันทึกรายจ่ายเงินสดหน้าร้าน</h3>
+                      <button type="button" onClick={() => setExpenses([...expenses, { name: '', amount: '' }])} className="text-xs bg-slate-700 text-white font-bold px-2.5 py-1 rounded-lg">+ เพิ่มรายการ</button>
+                    </div>
+                    {expenses.map((exp, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <input type="text" placeholder="รายการ เช่น ซื้อน้ำแข็ง" value={exp.name} onChange={(e) => {
+                          const list = [...expenses]; list[idx].name = e.target.value; setExpenses(list);
+                        }} className="flex-1 bg-slate-50 border rounded-lg p-2 text-xs font-medium" />
+                        <input type="number" placeholder="จำนวนเงิน" value={exp.amount} onChange={(e) => {
+                          const list = [...expenses]; list[idx].amount = e.target.value; setExpenses(list);
+                        }} className="w-24 bg-slate-50 border rounded-lg p-2 text-xs font-medium" />
+                        {expenses.length > 1 && (
+                          <button type="button" onClick={() => setExpenses(expenses.filter((_, i) => i !== idx))} className="text-red-600 font-bold px-1">✕</button>
+                        )}
+                      </div>
+                    ))}
+                    {totalExpenses > 0 && (
+                      <p className="text-xs font-bold text-right text-red-600">รวมรายจ่ายหน้าร้าน: {totalExpenses.toLocaleString()} บาท</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
-                <h3 className="text-xs font-bold text-slate-700 uppercase">ช่องทางการขาย</h3>
-                <div><label className="text-xs text-slate-600 block mb-1">💵 เงินสด</label><input type="number" step="0.01" value={cash} onChange={(e) => setCash(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
-                <div><label className="text-xs text-slate-600 block mb-1">📱 QR Code</label><input type="number" step="0.01" value={qr} onChange={(e) => setQr(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
-                <div><label className="text-xs text-slate-600 block mb-1">🛵 Grab</label><input type="number" step="0.01" value={grab} onChange={(e) => setGrab(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
-                <div><label className="text-xs text-slate-600 block mb-1">🛵 LineMan</label><input type="number" step="0.01" value={lineman} onChange={(e) => setLineMan(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
-                <div><label className="text-xs text-slate-600 block mb-1">🛵 GrabTH</label><input type="number" step="0.01" value={grabth} onChange={(e) => setGrabth(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
-                <div><label className="text-xs text-slate-600 block mb-1">🛵 LineManTH</label><input type="number" step="0.01" value={linemanth} onChange={(e) => setLineManTH(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" /></div>
-              </div>
-              
-              <div className="space-y-4">
-                <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
-                  <h3 className="text-xs font-bold text-slate-700 uppercase">สรุปยอด</h3>
-                  <div><label className="text-xs text-slate-600 block mb-1">🥤 จำนวนแก้วรวม</label><input type="number" value={totalCups} onChange={(e) => setTotalCups(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm font-bold" /></div>
-                  <div>
-                    <label className="text-xs text-slate-600 block mb-1">💰 เงินสดจริงในลิ้นชัก (คำนวณอัตโนมัติ)</label>
-                    <input type="text" readOnly value={`${calculatedActualCash.toLocaleString()} บาท`} className="w-full bg-emerald-50 border border-emerald-300 rounded-lg p-2 text-sm font-bold text-emerald-800" />
-                    <p className="text-[10px] text-slate-400 mt-1">*มาจากเงินสดที่รับมารวม หักลบด้วยรายจ่ายหน้าร้านด้านล่าง</p>
+                <h3 className="text-xs font-bold text-slate-700 uppercase">📸 แนบรูปหลักฐาน / สลิป (สูงสุด 3 รูป)</h3>
+                <input type="file" accept="image/*" multiple onChange={handleImageUpload} disabled={uploadingImage || proofImages.length >= 3} className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-700 file:text-white cursor-pointer" />
+                {uploadingImage && <p className="text-xs text-slate-500 animate-pulse">กำลังอัปโหลด...</p>}
+                {proofImages.length > 0 && (
+                  <div className="flex gap-2 flex-wrap pt-2">
+                    {proofImages.map((url, idx) => (
+                      <div key={idx} className="relative w-20 h-20 rounded-lg overflow-hidden border">
+                        <img src={url} alt={`p-${idx}`} className="w-full h-full object-cover" />
+                        <button type="button" onClick={() => setProofImages(proofImages.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-red-600 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center">✕</button>
+                      </div>
+                    ))}
                   </div>
-                </div>
-
-                <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
-                  <div className="flex justify-between items-center">
-                    <h3 className="text-xs font-bold text-red-600 uppercase">💸 บันทึกรายจ่ายเงินสดหน้าร้าน</h3>
-                    <button type="button" onClick={() => setExpenses([...expenses, { name: '', amount: '' }])} className="text-xs bg-slate-700 text-white font-bold px-2.5 py-1 rounded-lg">+ เพิ่มรายการ</button>
-                  </div>
-                  {expenses.map((exp, idx) => (
-                    <div key={idx} className="flex gap-2 items-center">
-                      <input type="text" placeholder="รายการ เช่น ซื้อน้ำแข็ง" value={exp.name} onChange={(e) => {
-                        const list = [...expenses]; list[idx].name = e.target.value; setExpenses(list);
-                      }} className="flex-1 bg-slate-50 border rounded-lg p-2 text-xs font-medium" />
-                      <input type="number" placeholder="จำนวนเงิน" value={exp.amount} onChange={(e) => {
-                        const list = [...expenses]; list[idx].amount = e.target.value; setExpenses(list);
-                      }} className="w-24 bg-slate-50 border rounded-lg p-2 text-xs font-medium" />
-                      {expenses.length > 1 && (
-                        <button type="button" onClick={() => setExpenses(expenses.filter((_, i) => i !== idx))} className="text-red-600 font-bold px-1">✕</button>
-                      )}
-                    </div>
-                  ))}
-                  {totalExpenses > 0 && (
-                    <p className="text-xs font-bold text-right text-red-600">รวมรายจ่ายหน้าร้าน: {totalExpenses.toLocaleString()} บาท</p>
-                  )}
-                </div>
+                )}
               </div>
             </div>
 
-            <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
-              <h3 className="text-xs font-bold text-slate-700 uppercase">📸 แนบรูปหลักฐาน / สลิป (สูงสุด 3 รูป)</h3>
-              <input type="file" accept="image/*" multiple onChange={handleImageUpload} disabled={uploadingImage || proofImages.length >= 3} className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-700 file:text-white cursor-pointer" />
-              {uploadingImage && <p className="text-xs text-slate-500 animate-pulse">กำลังอัปโหลด...</p>}
-              {proofImages.length > 0 && (
-                <div className="flex gap-2 flex-wrap pt-2">
-                  {proofImages.map((url, idx) => (
-                    <div key={idx} className="relative w-20 h-20 rounded-lg overflow-hidden border">
-                      <img src={url} alt={`p-${idx}`} className="w-full h-full object-cover" />
-                      <button type="button" onClick={() => setProofImages(proofImages.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-red-600 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center">✕</button>
+            {/* ส่วนนับสต็อกรวมอยู่ในหน้าเดียวกัน */}
+            <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
+              <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📦 ตรวจนับสต็อกวัตถุดิบประจำวัน</h2>
+              <div className="space-y-6">
+                {CATEGORIES.map(cat => {
+                  const items = ingredients.filter(i => (i.category || 'อื่นๆ') === cat && i.is_active !== false);
+                  if (items.length === 0) return null;
+                  return (
+                    <div key={cat} className="bg-white p-5 rounded-xl border shadow-sm space-y-3">
+                      <h3 className="font-bold text-sm bg-slate-200 px-3 py-1.5 rounded-lg">{cat}</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {items.map(ing => (
+                          <div key={ing.id} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border">
+                            <span className="text-xs font-bold">{ing.name} ({ing.unit_type})</span>
+                            <input type="number" step="0.01" value={stockCounts[ing.id] ?? ''} onChange={(e) => setStockCounts({ ...stockCounts, [ing.id]: e.target.value })} className="w-24 bg-white border rounded-lg px-2 py-1 text-xs text-center font-bold outline-none" />
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                })}
+              </div>
             </div>
-            <button type="submit" className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl text-sm shadow">💾 บันทึกยอดขาย</button>
+
+            {/* ปุ่มบันทึกหลักครั้งเดียวจบ */}
+            <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black py-4 rounded-2xl text-base shadow-xl transition">💾 บันทึกยอดขายและอัปเดตสต็อกทั้งหมด</button>
           </form>
         </div>
 
-        {/* TAB 2: สต็อก */}
-        <div className={activeTab === 'stock' ? 'block' : 'hidden'}>
-          <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📦 ตรวจนับสต็อกวัตถุดิบ</h2>
-            <div className="space-y-6">
-              {CATEGORIES.map(cat => {
-                const items = ingredients.filter(i => (i.category || 'อื่นๆ') === cat && i.is_active !== false);
-                if (items.length === 0) return null;
-                return (
-                  <div key={cat} className="bg-white p-5 rounded-xl border shadow-sm space-y-3">
-                    <h3 className="font-bold text-sm bg-slate-200 px-3 py-1.5 rounded-lg">{cat}</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {items.map(ing => (
-                        <div key={ing.id} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border">
-                          <span className="text-xs font-bold">{ing.name} ({ing.unit_type})</span>
-                          <input type="number" step="0.01" value={stockCounts[ing.id] ?? ''} onChange={(e) => setStockCounts({ ...stockCounts, [ing.id]: e.target.value })} className="w-24 bg-white border rounded-lg px-2 py-1 text-xs text-center font-bold outline-none" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <button type="button" onClick={handleSaveStock} className="w-full bg-emerald-700 text-white font-bold py-3 rounded-xl text-sm shadow">💾 บันทึกนับสต็อก</button>
-          </div>
-        </div>
-
-        {/* TAB 3: แจ้งเจ้าของ */}
+        {/* TAB 2: แจ้งเจ้าของ */}
         <div className={activeTab === 'messages' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">💬 แจ้งเรื่องด่วนถึงเจ้าของร้าน</h2>
@@ -403,7 +418,7 @@ export default function StaffPage() {
           </div>
         </div>
 
-        {/* TAB 4: INTERNAL MESSAGE */}
+        {/* TAB 3: INTERNAL MESSAGE */}
         <div className={activeTab === 'internal_chat' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center flex-wrap gap-2">
