@@ -15,7 +15,7 @@ export default function StaffPage() {
   const [activeTab, setActiveTab] = useState('sales'); // sales | stock | messages | internal_chat
   const [today] = useState(todayLocal());
 
-  // ฟอร์มยอดขาย (ดึงค่าจาก localStorage ป้องกันข้อมูลหายเวลาสลับหน้า)
+  // ฟอร์มยอดขาย
   const [staffName, setStaffName] = useState('');
   const [cash, setCash] = useState('');
   const [qr, setQr] = useState('');
@@ -50,7 +50,7 @@ export default function StaffPage() {
     const saved = localStorage.getItem('staff_name');
     if (saved) setStaffName(saved);
 
-    // โหลดข้อมูลที่พิมพ์ค้างไว้ชั่วคราว
+    // โหลด Draft ที่ค้างไว้จาก localStorage ป้องกันข้อมูลและรูปหายเวลาสลับหน้า
     const savedCash = localStorage.getItem('draft_cash');
     const savedQr = localStorage.getItem('draft_qr');
     const savedGrab = localStorage.getItem('draft_grab');
@@ -60,13 +60,13 @@ export default function StaffPage() {
     const savedCups = localStorage.getItem('draft_total_cups');
     const savedImages = localStorage.getItem('draft_proof_images');
 
-    if (savedCash) setCash(savedCash);
-    if (savedQr) setQr(savedQr);
-    if (savedGrab) setGrab(savedGrab);
-    if (savedLineMan) setLineMan(savedLineMan);
-    if (savedGrabth) setGrabth(savedGrabth);
-    if (savedLineManTH) setLineManTH(savedLineManTH);
-    if (savedCups) setTotalCups(savedCups);
+    if (savedCash !== null) setCash(savedCash);
+    if (savedQr !== null) setQr(savedQr);
+    if (savedGrab !== null) setGrab(savedGrab);
+    if (savedLineMan !== null) setLineMan(savedLineMan);
+    if (savedGrabth !== null) setGrabth(savedGrabth);
+    if (savedLineManTH !== null) setLineManTH(savedLineManTH);
+    if (savedCups !== null) setTotalCups(savedCups);
     if (savedImages) {
       try { setProofImages(JSON.parse(savedImages)); } catch (e) {}
     }
@@ -84,7 +84,7 @@ export default function StaffPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // บันทึก Draft ลง localStorage ทุกครั้งที่มีการเปลี่ยนแปลง เพื่อไม่ให้ข้อมูลหายเวลาสลับหน้า
+  // บันทึก Draft ลง localStorage ทันทีเมื่อผู้ใช้พิมพ์หรือเปลี่ยนแปลงข้อมูล
   useEffect(() => { localStorage.setItem('draft_cash', cash); }, [cash]);
   useEffect(() => { localStorage.setItem('draft_qr', qr); }, [qr]);
   useEffect(() => { localStorage.setItem('draft_grab', grab); }, [grab]);
@@ -94,11 +94,17 @@ export default function StaffPage() {
   useEffect(() => { localStorage.setItem('draft_total_cups', totalCups); }, [totalCups]);
   useEffect(() => { localStorage.setItem('draft_proof_images', JSON.stringify(proofImages)); }, [proofImages]);
 
+  // เมื่อกดเปลี่ยนแท็บมาที่หน้าสต็อก ให้ดึงค่าสดจากฐานข้อมูลมาเซ็ตใหม่เสมอ ป้องกันตัวเลขค้าง
+  useEffect(() => {
+    if (activeTab === 'stock') {
+      fetchIngredients();
+    }
+  }, [activeTab]);
+
   async function fetchExistingSales() {
     const { data } = await supabase.from('daily_sales').select('*').eq('date', today).maybeSingle();
     if (data) {
       if (data.staff_name) setStaffName(data.staff_name);
-      // ถ้ายังไม่มีการพิมพ์ Draft ค้างไว้ ให้ดึงจาก DB มาแสดง
       if (!cash && data.cash !== null) setCash(data.cash ?? '');
       if (!qr && data.qr !== null) setQr(data.qr ?? '');
       if (!grab && data.grab !== null) setGrab(data.grab ?? '');
@@ -198,7 +204,7 @@ export default function StaffPage() {
 
     localStorage.setItem('staff_name', staffName.trim());
 
-    // ล้าง Draft ใน localStorage หลังจากบันทึกสำเร็จเรียบร้อย
+    // ล้างข้อมูล Draft หลังจากกดบันทึกสำเร็จเรียบร้อย
     localStorage.removeItem('draft_cash');
     localStorage.removeItem('draft_qr');
     localStorage.removeItem('draft_grab');
