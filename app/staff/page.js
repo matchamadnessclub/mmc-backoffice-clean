@@ -101,8 +101,6 @@ export default function StaffPage() {
   }
 
   const totalExpenses = expenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
-  
-  // คำนวณเงินสดทั้งหมดในลิ้นชัก: (เงินสดตั้งต้นยกมาจากเมื่อวาน + เงินสดรับใหม่วันนี้) - รายจ่ายหน้าร้านวันนี้
   const calculatedActualCash = yesterdayActualCash + (Number(cash) || 0) - totalExpenses;
 
   async function fetchIngredients() {
@@ -148,12 +146,11 @@ export default function StaffPage() {
     setUploadingImage(false);
   }
 
-  // กดปุ่มบันทึกยอดขายครั้งเดียว บันทึกทั้ง ยอดขาย, รายจ่าย, รูป และ สต็อก พร้อมกันทันที
   async function handleSaveAll(e) {
     e.preventDefault();
     if (!staffName.trim()) { alert('กรุณากรอกชื่อพนักงาน'); return; }
 
-    // 1. บันทึกยอดขาย
+    // บันทึกยอดขาย พร้อมแนบ proof_images กลับเข้าไปอย่างถูกต้อง
     const salesPayload = {
       date: today,
       staff_name: staffName.trim(),
@@ -172,7 +169,6 @@ export default function StaffPage() {
     const { error: salesError } = await supabase.from('daily_sales').upsert(salesPayload, { onConflict: 'date' });
     if (salesError) { alert('Error saving sales: ' + salesError.message); return; }
 
-    // 2. บันทึกรายจ่าย
     await supabase.from('expenses').delete().eq('date', today);
     const validExpenses = expenses.filter(exp => exp.name.trim() !== '' && Number(exp.amount) > 0);
     if (validExpenses.length > 0) {
@@ -185,7 +181,6 @@ export default function StaffPage() {
       await supabase.from('expenses').insert(expensePayloads);
     }
 
-    // 3. บันทึกสต็อก
     let abnormal = [];
     for (const ing of ingredients) {
       const newStock = Number(stockCounts[ing.id]);
@@ -209,7 +204,7 @@ export default function StaffPage() {
 
     localStorage.setItem('staff_name', staffName.trim());
     alert('บันทึกยอดขาย รายจ่าย และอัปเดตสต็อกสำเร็จเรียบร้อย!');
-    fetchIngredients(); // รีเฟรชสต็อกหลังบันทึก
+    fetchIngredients();
   }
 
   async function handleSendMessage(e) {
@@ -278,14 +273,12 @@ export default function StaffPage() {
           <div className="bg-white px-4 py-2 rounded-xl border border-slate-300 shadow-sm text-sm font-bold text-slate-700">📅 {today}</div>
         </div>
 
-        {/* Tab พนักงาน */}
         <div className="flex bg-slate-300/80 p-1.5 rounded-2xl shadow-inner border border-slate-400 gap-1 text-xs md:text-sm overflow-x-auto">
           <button onClick={() => setActiveTab('sales')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'sales' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>📊 ยอดขาย & สต็อก</button>
           <button onClick={() => setActiveTab('messages')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'messages' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>💬 แจ้งเจ้าของ</button>
           <button onClick={() => setActiveTab('internal_chat')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'internal_chat' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>💬 แชททีมงาน</button>
         </div>
 
-        {/* TAB 1: ฟอร์มรวมยอดขาย + รายจ่าย + สต็อก (กดปุ่มบันทึกครั้งเดียวจบ) */}
         <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
           <form onSubmit={handleSaveAll} className="space-y-6">
             <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
@@ -358,7 +351,6 @@ export default function StaffPage() {
               </div>
             </div>
 
-            {/* ส่วนนับสต็อกรวมอยู่ในหน้าเดียวกัน */}
             <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
               <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📦 ตรวจนับสต็อกวัตถุดิบประจำวัน</h2>
               <div className="space-y-6">
@@ -382,12 +374,10 @@ export default function StaffPage() {
               </div>
             </div>
 
-            {/* ปุ่มบันทึกหลักครั้งเดียวจบ */}
             <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white font-black py-4 rounded-2xl text-base shadow-xl transition">💾 บันทึกยอดขายและอัปเดตสต็อกทั้งหมด</button>
           </form>
         </div>
 
-        {/* TAB 2: แจ้งเจ้าของ */}
         <div className={activeTab === 'messages' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">💬 แจ้งเรื่องด่วนถึงเจ้าของร้าน</h2>
@@ -418,7 +408,6 @@ export default function StaffPage() {
           </div>
         </div>
 
-        {/* TAB 3: INTERNAL MESSAGE */}
         <div className={activeTab === 'internal_chat' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center flex-wrap gap-2">
