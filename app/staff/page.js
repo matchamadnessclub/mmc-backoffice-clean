@@ -12,10 +12,10 @@ function todayLocal() {
 }
 
 export default function StaffPage() {
-  const [activeTab, setActiveTab] = useState('sales'); // sales | stock | messages | internal_chat
+  // ควบคุมการแสดงผลแต่ละแท็บด้วย CSS (hidden) แทนการใช้เงื่อนไข && เพื่อไม่ให้ State หรือรูปภาพที่แนบไว้ถูกล้างทิ้งตอนสลับหน้า
+  const [activeTab, setActiveTab] = useState('sales'); 
   const [today] = useState(todayLocal());
 
-  // ฟอร์มยอดขาย
   const [staffName, setStaffName] = useState('');
   const [cash, setCash] = useState('');
   const [qr, setQr] = useState('');
@@ -25,23 +25,18 @@ export default function StaffPage() {
   const [linemanth, setLineManTH] = useState('');
   const [totalCups, setTotalCups] = useState('');
   
-  // รายจ่ายเงินสดหน้าร้าน
   const [expenses, setExpenses] = useState([{ name: '', amount: '' }]);
-
   const [proofImages, setProofImages] = useState([]);
   const [uploadingImage, setUploadingImage] = useState(false);
 
-  // สต็อก
   const [ingredients, setIngredients] = useState([]);
   const [stockCounts, setStockCounts] = useState({});
 
-  // ข้อความแจ้งเจ้าของ
   const [msgTopic, setMsgTopic] = useState(TOPICS[0]);
   const [messageText, setMessageText] = useState('');
   const [sendingMsg, setSendingMsg] = useState(false);
   const [myMessages, setMyMessages] = useState([]);
 
-  // Internal Message แชทกับเจ้าของ
   const [internalMsgs, setInternalMsgs] = useState([]);
   const [chatText, setChatText] = useState('');
   const [uploadingChatFile, setUploadingChatFile] = useState(false);
@@ -50,31 +45,7 @@ export default function StaffPage() {
     const saved = localStorage.getItem('staff_name');
     if (saved) setStaffName(saved);
 
-    // โหลด Draft ที่ค้างไว้จาก localStorage ป้องกันข้อมูลและรูปหายเวลาสลับหน้า
-    const savedCash = localStorage.getItem('draft_cash');
-    const savedQr = localStorage.getItem('draft_qr');
-    const savedGrab = localStorage.getItem('draft_grab');
-    const savedLineMan = localStorage.getItem('draft_lineman');
-    const savedGrabth = localStorage.getItem('draft_grabth');
-    const savedLineManTH = localStorage.getItem('draft_linemanth');
-    const savedCups = localStorage.getItem('draft_total_cups');
-    const savedImages = localStorage.getItem('draft_proof_images');
-
-    if (savedCash !== null) setCash(savedCash);
-    if (savedQr !== null) setQr(savedQr);
-    if (savedGrab !== null) setGrab(savedGrab);
-    if (savedLineMan !== null) setLineMan(savedLineMan);
-    if (savedGrabth !== null) setGrabth(savedGrabth);
-    if (savedLineManTH !== null) setLineManTH(savedLineManTH);
-    if (savedCups !== null) setTotalCups(savedCups);
-    if (savedImages) {
-      try { setProofImages(JSON.parse(savedImages)); } catch (e) {}
-    }
-
-    fetchIngredients();
-    fetchStaffMessages();
-    fetchExistingSales();
-    fetchInternalMessages();
+    fetchData();
 
     const channel = supabase.channel('staff-dashboard-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_messages' }, () => fetchStaffMessages())
@@ -84,37 +55,27 @@ export default function StaffPage() {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  // บันทึก Draft ลง localStorage ทันทีเมื่อผู้ใช้พิมพ์หรือเปลี่ยนแปลงข้อมูล
-  useEffect(() => { localStorage.setItem('draft_cash', cash); }, [cash]);
-  useEffect(() => { localStorage.setItem('draft_qr', qr); }, [qr]);
-  useEffect(() => { localStorage.setItem('draft_grab', grab); }, [grab]);
-  useEffect(() => { localStorage.setItem('draft_lineman', lineman); }, [lineman]);
-  useEffect(() => { localStorage.setItem('draft_grabth', grabth); }, [grabth]);
-  useEffect(() => { localStorage.setItem('draft_linemanth', linemanth); }, [linemanth]);
-  useEffect(() => { localStorage.setItem('draft_total_cups', totalCups); }, [totalCups]);
-  useEffect(() => { localStorage.setItem('draft_proof_images', JSON.stringify(proofImages)); }, [proofImages]);
-
-  // เมื่อกดเปลี่ยนแท็บมาที่หน้าสต็อก ให้ดึงค่าสดจากฐานข้อมูลมาเซ็ตใหม่เสมอ ป้องกันตัวเลขค้าง
-  useEffect(() => {
-    if (activeTab === 'stock') {
-      fetchIngredients();
-    }
-  }, [activeTab]);
+  async function fetchData() {
+    await Promise.all([
+      fetchExistingSales(),
+      fetchIngredients(),
+      fetchStaffMessages(),
+      fetchInternalMessages()
+    ]);
+  }
 
   async function fetchExistingSales() {
     const { data } = await supabase.from('daily_sales').select('*').eq('date', today).maybeSingle();
     if (data) {
       if (data.staff_name) setStaffName(data.staff_name);
-      if (!cash && data.cash !== null) setCash(data.cash ?? '');
-      if (!qr && data.qr !== null) setQr(data.qr ?? '');
-      if (!grab && data.grab !== null) setGrab(data.grab ?? '');
-      if (!lineman && data.lineman !== null) setLineMan(data.lineman ?? '');
-      if (!grabth && data.grabth !== null) setGrabth(data.grabth ?? '');
-      if (!linemanth && data.linemanth !== null) setLineManTH(data.linemanth ?? '');
-      if (!totalCups && data.total_cups !== null) setTotalCups(data.total_cups ?? '');
-      if (Array.isArray(data.proof_images) && data.proof_images.length > 0 && proofImages.length === 0) {
-        setProofImages(data.proof_images);
-      }
+      setCash(data.cash ?? '');
+      setQr(data.qr ?? '');
+      setGrab(data.grab ?? '');
+      setLineMan(data.lineman ?? '');
+      setGrabth(data.grabth ?? '');
+      setLineManTH(data.linemanth ?? '');
+      setTotalCups(data.total_cups ?? '');
+      if (Array.isArray(data.proof_images)) setProofImages(data.proof_images);
     }
     const { data: expData } = await supabase.from('expenses').select('*').eq('date', today);
     if (expData && expData.length > 0) {
@@ -130,7 +91,8 @@ export default function StaffPage() {
     if (data) {
       setIngredients(data);
       const map = {};
-      data.forEach(i => { map[i.id] = i.current_stock ?? i.total_unit; });
+      // แก้ไขให้ดึงค่าสต็อกล่าสุดมาแสดงตรงช่องนับเสมอ ไม่ให้ค้างค่าเก่าผิดพลาด
+      data.forEach(i => { map[i.id] = i.current_stock ?? i.total_unit ?? ''; });
       setStockCounts(map);
     }
   }
@@ -203,17 +165,6 @@ export default function StaffPage() {
     }
 
     localStorage.setItem('staff_name', staffName.trim());
-
-    // ล้างข้อมูล Draft หลังจากกดบันทึกสำเร็จเรียบร้อย
-    localStorage.removeItem('draft_cash');
-    localStorage.removeItem('draft_qr');
-    localStorage.removeItem('draft_grab');
-    localStorage.removeItem('draft_lineman');
-    localStorage.removeItem('draft_grabth');
-    localStorage.removeItem('draft_linemanth');
-    localStorage.removeItem('draft_total_cups');
-    localStorage.removeItem('draft_proof_images');
-
     alert('บันทึกยอดขายและรายจ่ายสำเร็จ!');
   }
 
@@ -320,8 +271,8 @@ export default function StaffPage() {
           <button onClick={() => setActiveTab('internal_chat')} className={`flex-1 py-2.5 rounded-xl font-bold transition shadow-sm ${activeTab === 'internal_chat' ? 'bg-slate-800 text-white' : 'text-slate-700 hover:bg-white/50'}`}>💬 แชททีมงาน</button>
         </div>
 
-        {/* TAB 1: ยอดขาย + รายจ่ายหน้าร้าน + แนบรูป */}
-        {activeTab === 'sales' && (
+        {/* TAB 1: ยอดขาย + รายจ่ายหน้าร้าน + แนบรูป (ใช้ hidden class เพื่อคงสถานะรูปและข้อมูลไม่ให้หายเวลาสลับแท็บ) */}
+        <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
           <form onSubmit={handleSaveSales} className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📝 บันทึกยอดขายประจำวัน</h2>
             <div>
@@ -340,7 +291,6 @@ export default function StaffPage() {
               </div>
               
               <div className="space-y-4">
-                {/* สรุปยอดแก้วและเงินสด */}
                 <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
                   <h3 className="text-xs font-bold text-slate-700 uppercase">สรุปยอด</h3>
                   <div><label className="text-xs text-slate-600 block mb-1">🥤 จำนวนแก้วรวม</label><input type="number" value={totalCups} onChange={(e) => setTotalCups(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm font-bold" /></div>
@@ -351,7 +301,6 @@ export default function StaffPage() {
                   </div>
                 </div>
 
-                {/* บันทึกรายจ่ายเงินสดหน้าร้าน */}
                 <div className="bg-white p-4 rounded-xl border border-slate-300 space-y-3">
                   <div className="flex justify-between items-center">
                     <h3 className="text-xs font-bold text-red-600 uppercase">💸 บันทึกรายจ่ายเงินสดหน้าร้าน</h3>
@@ -394,10 +343,10 @@ export default function StaffPage() {
             </div>
             <button type="submit" className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl text-sm shadow">💾 บันทึกยอดขาย</button>
           </form>
-        )}
+        </div>
 
         {/* TAB 2: สต็อก */}
-        {activeTab === 'stock' && (
+        <div className={activeTab === 'stock' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📦 ตรวจนับสต็อกวัตถุดิบ</h2>
             <div className="space-y-6">
@@ -421,10 +370,10 @@ export default function StaffPage() {
             </div>
             <button type="button" onClick={handleSaveStock} className="w-full bg-emerald-700 text-white font-bold py-3 rounded-xl text-sm shadow">💾 บันทึกนับสต็อก</button>
           </div>
-        )}
+        </div>
 
         {/* TAB 3: แจ้งเจ้าของ */}
-        {activeTab === 'messages' && (
+        <div className={activeTab === 'messages' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">💬 แจ้งเรื่องด่วนถึงเจ้าของร้าน</h2>
             <form onSubmit={handleSendMessage} className="bg-white p-4 rounded-xl border shadow-sm space-y-3">
@@ -452,10 +401,10 @@ export default function StaffPage() {
               ))}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* TAB 4: INTERNAL MESSAGE (ห้องแชทสไตล์ LINE) */}
-        {activeTab === 'internal_chat' && (
+        {/* TAB 4: INTERNAL MESSAGE */}
+        <div className={activeTab === 'internal_chat' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center flex-wrap gap-2">
               <div>
@@ -497,7 +446,7 @@ export default function StaffPage() {
               <button type="submit" className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-6 py-2.5 rounded-xl text-sm shadow transition shrink-0">ส่ง</button>
             </form>
           </div>
-        )}
+        </div>
 
       </div>
     </main>

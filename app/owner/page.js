@@ -62,14 +62,13 @@ export default function OwnerDashboard() {
   const [activeTab, setActiveTab] = useState('sales'); 
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [salesData, setSalesData] = useState(null);
-  const [expensesData, setExpensesData] = useState([]); // เพิ่มตัวแปรเก็บรายจ่าย
+  const [expensesData, setExpensesData] = useState([]);
   const [ingredients, setIngredients] = useState([]);
   const [recipesList, setRecipesList] = useState([]);
   const [staffLogs, setStaffLogs] = useState([]);
   const [promotionsList, setPromotionsList] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // State สำหรับ Pop-up ดูรายละเอียดและสลิปย้อนหลัง
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
 
   const [staffMessages, setStaffMessages] = useState([]);
@@ -131,7 +130,6 @@ export default function OwnerDashboard() {
       const { data: sales } = await supabase.from('daily_sales').select('*').eq('date', selectedDate).maybeSingle();
       setSalesData(sales || null);
 
-      // ดึงข้อมูลรายจ่ายหน้าร้านของวันที่เลือก
       const { data: exp } = await supabase.from('expenses').select('*').eq('date', selectedDate);
       setExpensesData(exp || []);
 
@@ -380,7 +378,6 @@ export default function OwnerDashboard() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-200 via-zinc-300 to-slate-400 text-slate-800 p-4 md:p-8">
 
-      {/* Pop-up สำหรับดูรายละเอียดแยกช่องทางและรูปสลิปย้อนหลัง */}
       {selectedSaleDetail && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -398,7 +395,6 @@ export default function OwnerDashboard() {
               <div className="col-span-2">เงินสดจริงในลิ้นชัก: <span className="font-bold text-emerald-700">{(Number(selectedSaleDetail.actual_cash) || 0).toLocaleString()} ฿</span></div>
             </div>
 
-            {/* ยอดแยกตามช่องทาง */}
             <div className="space-y-1">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 ยอดแยกตามช่องทาง</h4>
               <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-xl border">
@@ -411,7 +407,6 @@ export default function OwnerDashboard() {
               </div>
             </div>
 
-            {/* รูปสลิป */}
             <div className="space-y-2">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📸 รูปสลิปหลักฐานจากพนักงาน</h4>
               {Array.isArray(selectedSaleDetail.proof_images) && selectedSaleDetail.proof_images.length > 0 ? (
@@ -578,7 +573,7 @@ export default function OwnerDashboard() {
           <button onClick={() => setActiveTab('staff_logs')} className={tabClass('staff_logs', activeTab)}>👥 ประวัติ</button>
         </div>
 
-        {activeTab === 'sales' && (
+        <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center gap-2 flex-wrap">
               <h2 className="font-bold text-lg text-slate-800">สรุปยอดขายประจำวัน ({selectedDate})</h2>
@@ -592,7 +587,6 @@ export default function OwnerDashboard() {
                   <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm text-center"><p className="text-xs font-semibold text-slate-500 mb-1">เงินสดจริงในลิ้นชัก</p><p className="text-2xl font-black text-emerald-700">{(Number(salesData.actual_cash) || 0).toLocaleString()} บาท</p></div>
                 </div>
 
-                {/* แสดงยอดแยกช่องทางเด่นชัด */}
                 <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 แยกยอดขายตามช่องทาง</h3>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
@@ -605,7 +599,6 @@ export default function OwnerDashboard() {
                   </div>
                 </div>
 
-                {/* รายการรายจ่ายเงินสดหน้าร้าน */}
                 <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
                   <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">💸 รายจ่ายเงินสดหน้าร้าน</h3>
                   {expensesData.length > 0 ? (
@@ -640,11 +633,33 @@ export default function OwnerDashboard() {
               </div>
             ) : <div className="text-center py-12 text-slate-500 font-medium">ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก</div>}
           </div>
-        )}
+        </div>
 
-        {activeTab === 'ingredients' && (
+        {/* TAB 2: สต็อก (เพิ่มกล่องสรุปวัตถุดิบใกล้หมดด้านบนสุด) */}
+        <div className={activeTab === 'ingredients' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก</h2>
+
+            {/* กล่องสรุปสต็อกใกล้หมดให้ดูก่อน */}
+            {lowStockItems.length > 0 && (
+              <div className="bg-red-50 border-2 border-red-300 p-4 rounded-2xl shadow-sm space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🚨</span>
+                  <h3 className="font-black text-sm text-red-800 uppercase tracking-wide">แจ้งเตือนวัตถุดิบใกล้หมด ({lowStockItems.length} รายการที่ต้องรีบเติม)</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {lowStockItems.map(item => (
+                    <div key={item.id} className="bg-white border border-red-200 p-3 rounded-xl flex justify-between items-center shadow-xs">
+                      <div>
+                        <p className="font-bold text-xs text-slate-800">{item.name}</p>
+                        <p className="text-[10px] text-red-600 font-bold">คงเหลือ: {getStock(item)} {item.unit_type} (ขั้นต่ำ: {getAlertLimit(item)})</p>
+                      </div>
+                      <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-lg font-bold shrink-0">ใกล้หมด</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleSaveIngredient} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
               <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่</h3>
@@ -730,9 +745,9 @@ export default function OwnerDashboard() {
               })}
             </div>
           </div>
-        )}
+        </div>
 
-        {activeTab === 'recipe' && (
+        <div className={activeTab === 'recipe' ? 'block' : 'hidden'}>
           <div className="space-y-6">
             <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
               <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🥤 เพิ่มสูตรเครื่องดื่มใหม่ & คำนวณต้นทุน</h2>
@@ -839,9 +854,9 @@ export default function OwnerDashboard() {
               </div>
             </div>
           </div>
-        )}
+        </div>
 
-        {activeTab === 'messages' && (
+        <div className={activeTab === 'messages' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📥 เรื่องที่พนักงานแจ้งเข้ามา ({staffMessages.length})</h2>
             <div className="space-y-3">
@@ -865,9 +880,9 @@ export default function OwnerDashboard() {
               )) : <p className="text-center py-8 text-slate-400 font-medium">ไม่มีข้อความจากพนักงาน</p>}
             </div>
           </div>
-        )}
+        </div>
 
-        {activeTab === 'internal_chat' && (
+        <div className={activeTab === 'internal_chat' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center flex-wrap gap-2">
               <div>
@@ -911,9 +926,9 @@ export default function OwnerDashboard() {
               <button type="submit" className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-6 py-2.5 rounded-xl text-sm shadow transition shrink-0">ส่ง</button>
             </form>
           </div>
-        )}
+        </div>
 
-        {activeTab === 'promotions' && (
+        <div className={activeTab === 'promotions' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🏷️ จัดการโปรโมชันและเมนูใหม่</h2>
             <form onSubmit={handleSavePromotion} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
@@ -932,9 +947,9 @@ export default function OwnerDashboard() {
               ))}
             </div>
           </div>
-        )}
+        </div>
 
-        {activeTab === 'staff_logs' && (
+        <div className={activeTab === 'staff_logs' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">ประวัติการทำงานย้อนหลัง (คลิกแถวเพื่อดูรายละเอียดช่องทางและสลิป)</h2>
             <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-x-auto">
@@ -969,7 +984,7 @@ export default function OwnerDashboard() {
               </table>
             </div>
           </div>
-        )}
+        </div>
 
       </div>
     </main>
