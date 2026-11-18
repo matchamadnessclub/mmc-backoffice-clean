@@ -63,7 +63,7 @@ export default function OwnerDashboard() {
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [salesData, setSalesData] = useState(null);
   const [expensesData, setExpensesData] = useState([]);
-  const [allSalesHistory, setAllSalesHistory] = useState([]); // เก็บประวัติยอดขายทั้งหมดสำหรับทำสรุปและวิเคราะห์
+  const [allSalesHistory, setAllSalesHistory] = useState([]);
   const [ingredients, setIngredients] = useState([]);
   const [recipesList, setRecipesList] = useState([]);
   const [staffLogs, setStaffLogs] = useState([]);
@@ -268,10 +268,14 @@ export default function OwnerDashboard() {
     const cleanItems = recipeItems.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
+    // ตัดฟิลด์ menu_category ออกเพื่อไม่ให้ Error schema cache ของ Supabase
     const payload = {
-      menu_name: menuName.trim(), cogs, ingredients_detail: cleanItems,
-      base_price: Number(basePrice) || 0, target_gp: Number(targetGP) || 30, has_milk_option: hasMilkOption,
-      menu_category: getRecipeCategory(menuName.trim())
+      menu_name: menuName.trim(), 
+      cogs, 
+      ingredients_detail: cleanItems,
+      base_price: Number(basePrice) || 0, 
+      target_gp: Number(targetGP) || 30, 
+      has_milk_option: hasMilkOption
     };
 
     const { error } = await supabase.from('recipes').insert([payload]);
@@ -287,11 +291,14 @@ export default function OwnerDashboard() {
     const cleanItems = editingRecipeModal.ingredients_detail.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
+    // ตัดฟิลด์ menu_category ออกเช่นกัน
     const payload = {
-      menu_name: editingRecipeModal.menu_name.trim(), cogs, ingredients_detail: cleanItems,
-      base_price: Number(editingRecipeModal.base_price) || 0, target_gp: Number(editingRecipeModal.target_gp) || 30,
-      has_milk_option: editingRecipeModal.has_milk_option || false,
-      menu_category: getRecipeCategory(editingRecipeModal.menu_name.trim())
+      menu_name: editingRecipeModal.menu_name.trim(), 
+      cogs, 
+      ingredients_detail: cleanItems,
+      base_price: Number(editingRecipeModal.base_price) || 0, 
+      target_gp: Number(editingRecipeModal.target_gp) || 30,
+      has_milk_option: editingRecipeModal.has_milk_option || false
     };
 
     const { error } = await supabase.from('recipes').update(payload).eq('id', editingRecipeModal.id);
@@ -356,7 +363,6 @@ export default function OwnerDashboard() {
   const totalSales = salesData ? ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(salesData[k]) || 0), 0) : 0;
   const totalExpensesAmount = expensesData.reduce((sum, item) => sum + (Number(item.amount) || Number(item.price) || 0), 0);
 
-  // คำนวณยอดวิเคราะห์ (รายวัน, รายสัปดาห์, รายเดือน, รายปี) จาก allSalesHistory
   const now = new Date();
   const todayStr = todayLocal();
   const currentYear = now.getFullYear().toString();
@@ -366,17 +372,14 @@ export default function OwnerDashboard() {
   const todaySalesSum = todayRecord ? ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(todayRecord[k]) || 0), 0) : 0;
   const todayCupsSum = todayRecord ? Number(todayRecord.total_cups) || 0 : 0;
 
-  // รายเดือน (เดือนปัจจุบัน)
   const monthRecords = allSalesHistory.filter(s => s.date && s.date.startsWith(currentMonth));
   const monthSalesSum = monthRecords.reduce((acc, curr) => acc + ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(curr[k]) || 0), 0), 0);
   const monthCupsSum = monthRecords.reduce((acc, curr) => acc + (Number(curr.total_cups) || 0), 0);
 
-  // รายปี (ปีปัจจุบัน)
   const yearRecords = allSalesHistory.filter(s => s.date && s.date.startsWith(currentYear));
   const yearSalesSum = yearRecords.reduce((acc, curr) => acc + ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(curr[k]) || 0), 0), 0);
   const yearCupsSum = yearRecords.reduce((acc, curr) => acc + (Number(curr.total_cups) || 0), 0);
 
-  // รายสัปดาห์ (ย้อนหลัง 7 วันล่าสุด)
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(now.getDate() - 6);
   const weekRecords = allSalesHistory.filter(s => {
@@ -612,7 +615,6 @@ export default function OwnerDashboard() {
           <button onClick={() => setActiveTab('staff_logs')} className={tabClass('staff_logs', activeTab)}>👥 ประวัติ</button>
         </div>
 
-        {/* TAB 1: ยอดขาย (เพิ่มรายการย้อนหลังเรียงลงมา + โมดัลคลิกดูรายละเอียด + วิเคราะห์ยอดขายด้านล่าง) */}
         <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center gap-2 flex-wrap">
@@ -674,7 +676,6 @@ export default function OwnerDashboard() {
               </div>
             ) : <div className="text-center py-10 text-slate-500 font-medium bg-white rounded-xl border border-slate-300 p-6">ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก ({selectedDate})</div>}
 
-            {/* ส่วนประวัติยอดขายย้อนหลังเรียงลงมา */}
             <div className="space-y-3 pt-4 border-t border-slate-300">
               <h3 className="font-bold text-base text-slate-800">📋 รายการยอดขายย้อนหลังทั้งหมด (คลิกแถวเพื่อดูรายละเอียด & สลิป)</h3>
               <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-x-auto max-h-80 overflow-y-auto">
@@ -710,7 +711,6 @@ export default function OwnerDashboard() {
               </div>
             </div>
 
-            {/* ส่วนวิเคราะห์ยอดขายด้านล่างสุด */}
             <div className="space-y-4 pt-6 border-t-2 border-slate-300">
               <div className="flex items-center gap-2">
                 <span className="text-xl">📈</span>
@@ -743,7 +743,6 @@ export default function OwnerDashboard() {
           </div>
         </div>
 
-        {/* TAB 2: สต็อก */}
         <div className={activeTab === 'ingredients' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก</h2>

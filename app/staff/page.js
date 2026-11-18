@@ -150,7 +150,6 @@ export default function StaffPage() {
     e.preventDefault();
     if (!staffName.trim()) { alert('กรุณากรอกชื่อพนักงาน'); return; }
 
-    // บันทึกยอดขาย พร้อมแนบ proof_images กลับเข้าไปอย่างถูกต้อง
     const salesPayload = {
       date: today,
       staff_name: staffName.trim(),
@@ -204,6 +203,17 @@ export default function StaffPage() {
 
     localStorage.setItem('staff_name', staffName.trim());
     alert('บันทึกยอดขาย รายจ่าย และอัปเดตสต็อกสำเร็จเรียบร้อย!');
+    
+    // เคลียร์ค่าฟอร์มทั้งหมดให้เป็นค่าว่าง/0 หลังบันทึกสำเร็จ
+    setCash('');
+    setQr('');
+    setGrab('');
+    setLineMan('');
+    setGrabth('');
+    setLineManTH('');
+    setTotalCups('');
+    setExpenses([{ name: '', amount: '' }]);
+    setProofImages([]);
     fetchIngredients();
   }
 
