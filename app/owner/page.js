@@ -95,10 +95,10 @@ export default function OwnerDashboard() {
   const [targetGP, setTargetGP] = useState(30);
   const [basePrice, setBasePrice] = useState('');
   const [hasMilkOption, setHasMilkOption] = useState(false);
-  const [hasTeaOption, setHasTeaOption] = useState(false); // ฟีเจอร์ใหม่: เปลี่ยนผงชาได้
+  const [hasTeaOption, setHasTeaOption] = useState(false); // 🍵 เพิ่มฟลากสำหรับเปิดใช้งานเปลี่ยนผงชา
 
   const [selectedMilkTypes, setSelectedMilkTypes] = useState({});
-  const [selectedTeaTypes, setSelectedTeaTypes] = useState({}); // เก็บ ID ผงชาที่เลือกเปลี่ยนแยกตามเมนู
+  const [selectedTeaTypes, setSelectedTeaTypes] = useState({}); // 🍵 เก็บ ID ผงชาที่เลือกเปลี่ยนแยกตามเมนู
 
   const [editingRecipeModal, setEditingRecipeModal] = useState(null);
   const [recipeFilterCat, setRecipeFilterCat] = useState('ทั้งหมด');
@@ -277,7 +277,7 @@ export default function OwnerDashboard() {
       base_price: Number(basePrice) || 0,
       target_gp: Number(targetGP) || 30, 
       has_milk_option: hasMilkOption,
-      has_tea_option: hasTeaOption
+      has_tea_option: hasTeaOption // 🍵 บันทึกค่าสถานะ
     };
 
     const { error } = await supabase.from('recipes').insert([payload]);
@@ -300,7 +300,7 @@ export default function OwnerDashboard() {
       base_price: Number(editingRecipeModal.base_price) || 0,
       target_gp: Number(editingRecipeModal.target_gp) || 30,
       has_milk_option: editingRecipeModal.has_milk_option || false,
-      has_tea_option: editingRecipeModal.has_tea_option || false
+      has_tea_option: editingRecipeModal.has_tea_option || false // 🍵 อัปเดตสถานะใน modal
     };
 
     const { error } = await supabase.from('recipes').update(payload).eq('id', editingRecipeModal.id);
@@ -314,7 +314,7 @@ export default function OwnerDashboard() {
     if (!error) fetchOwnerData();
   }
 
-  // ฟังก์ชันคำนวณต้นทุน (COGS) รองรับทั้งการเปลี่ยนนม และการเปลี่ยนผงชา
+  // 🍵 ฟังก์ชันคำนวณต้นทุนรวม (COGS) รองรับทั้งการเปลี่ยนชนิดนม และการเปลี่ยนผงชา (ใช้ปริมาณเท่าเดิมจากสูตรตั้งต้น)
   function calculateRecipeCost(rec, milkType, teaIngId) {
     let totalCost = 0;
     (rec.ingredients_detail || []).forEach(item => {
@@ -332,7 +332,7 @@ export default function OwnerDashboard() {
         }
       }
 
-      // 2. เงื่อนไขเปลี่ยนผงชา (เช็คจากหมวดเมล็ดกาแฟ/ชา หรือชื่อที่สื่อถึงชา/มัทฉะ)
+      // 2. 🍵 เงื่อนไขเปลี่ยนผงชา (เช็คจากหมวดเมล็ดกาแฟ/ชา หรือชื่อที่สื่อถึงชา/มัทฉะ)
       if (rec.has_tea_option && teaIngId && Number(teaIngId) > 0) {
         const origCat = orig.category || '';
         const origName = (orig.name || '').toLowerCase();
@@ -543,6 +543,7 @@ export default function OwnerDashboard() {
         </div>
       )}
 
+      {/* 🍵 Popup Modal สำหรับแก้ไขสูตร */}
       {editingRecipeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -878,6 +879,7 @@ export default function OwnerDashboard() {
           </div>
         </div>
 
+        {/* 🥤 แท็บสูตรเครื่องดื่ม */}
         <div className={activeTab === 'recipe' ? 'block' : 'hidden'}>
           <div className="space-y-6">
             <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
@@ -885,7 +887,8 @@ export default function OwnerDashboard() {
               <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
                 <input type="text" placeholder="ชื่อเมนู เช่น Latte, Americano, Matcha, Hojicha" value={menuName} onChange={(e) => setMenuName(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium" />
                 
-                <div className="flex gap-4 pt-1">
+                {/* 🍵 ตัวเลือกเปิดใช้เปลี่ยนนม และเปลี่ยนผงชา */}
+                <div className="flex gap-6 pt-1">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={hasMilkOption} onChange={(e) => setHasMilkOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
                     <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
@@ -951,7 +954,7 @@ export default function OwnerDashboard() {
                   const netDeliveryProfit = recDelivery * (1 - gp / 100) - cogs;
                   const autoCat = getRecipeCategory(rec.menu_name);
 
-                  // รายการผงชาจากสต็อก (หมวด เมล็ดกาแฟ/ชา)
+                  // 🍵 ดึงรายชื่อผงชาจากสต็อก (หมวด เมล็ดกาแฟ/ชา) มาทำดรอปดาวน์
                   const teaOptionsList = ingredients.filter(i => (i.category || 'อื่นๆ') === 'เมล็ดกาแฟ/ชา' && i.is_active !== false);
 
                   return (
@@ -979,11 +982,11 @@ export default function OwnerDashboard() {
                         </div>
                       )}
 
-                      {/* ตัวเลือกผงชา (Dropdown) */}
+                      {/* 🍵 ตัวเลือกผงชา (Dropdown) */}
                       {rec.has_tea_option && (
                         <div className="bg-emerald-50 border border-emerald-200 p-2 rounded-xl flex items-center justify-between text-xs">
                           <span className="font-bold text-emerald-900">🍵 ผงชา:</span>
-                          <select value={teaId} onChange={(e) => setSelectedTeaTypes({ ...selectedTeaTypes, [rec.id]: e.target.value })} className="bg-white border border-emerald-300 rounded-lg p-1 text-xs font-semibold outline-none max-w-[190px]">
+                          <select value={teaId} onChange={(e) => setSelectedTeaTypes({ ...selectedTeaTypes, [rec.id]: e.target.value })} className="bg-white border border-emerald-300 rounded-lg p-1.5 text-xs font-bold outline-none max-w-[200px]">
                             <option value="">-- ใช้ผงชาตามสูตรตั้งต้น --</option>
                             {teaOptionsList.map(t => <option key={t.id} value={t.id}>{t.name} ({t.unit_type})</option>)}
                           </select>
@@ -1148,4 +1151,6 @@ export default function OwnerDashboard() {
   );
 }
 
-function tabCard(...) // ส่วนท้ายเหมือนเดิม
+function tabClass(tab, currentTab) {
+  return `flex-1 min-w-[100px] py-2.5 rounded-xl font-bold transition shadow-sm ${currentTab === tab ? 'bg-gradient-to-r from-slate-700 to-zinc-800 text-white' : 'text-slate-700 hover:bg-white/50'}`;
+}
