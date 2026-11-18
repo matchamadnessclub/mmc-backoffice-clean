@@ -58,6 +58,20 @@ function getRecipeCategory(name) {
   return '🥤 เมนูอื่นๆ (Others)';
 }
 
+// 🍵 ฟังก์ชันตรวจสอบว่าเมนูนี้ควรมีตัวเลือกเปลี่ยนผงชาหรือไม่ (เช็กจากชื่อเมนูหรือส่วนผสม)
+function checkIfMenuHasTea(rec, ingredientsList) {
+  const nameL = (rec.menu_name || '').toLowerCase();
+  if (nameL.includes('matcha') || nameL.includes('hojicha') || nameL.includes('tea') || nameL.includes('ชา') || nameL.includes('clear')) {
+    return true;
+  }
+  // หรือเช็กว่ามีส่วนผสมที่เป็นหมวดเมล็ดกาแฟ/ชาไหม
+  const hasTeaIng = (rec.ingredients_detail || []).some(item => {
+    const ing = ingredientsList.find(i => i.id === Number(item.ingredient_id));
+    return ing && (ing.category === 'เมล็ดกาแฟ/ชา' || (ing.name || '').toLowerCase().includes('tea') || (ing.name || '').toLowerCase().includes('ชา'));
+  });
+  return hasTeaIng;
+}
+
 export default function OwnerDashboard() {
   const [activeTab, setActiveTab] = useState('sales'); 
   const [selectedDate, setSelectedDate] = useState(todayLocal());
@@ -95,10 +109,9 @@ export default function OwnerDashboard() {
   const [targetGP, setTargetGP] = useState(30);
   const [basePrice, setBasePrice] = useState('');
   const [hasMilkOption, setHasMilkOption] = useState(false);
-  const [hasTeaOption, setHasTeaOption] = useState(false); // ตัวเลือกเปลี่ยนผงชา (ควบคุมการแสดงผลหน้าเว็บ)
 
   const [selectedMilkTypes, setSelectedMilkTypes] = useState({});
-  const [selectedTeaTypes, setSelectedTeaTypes] = useState({}); // เก็บ ID ผงชาที่เลือกเปลี่ยนแยกตามเมนู
+  const [selectedTeaTypes, setSelectedTeaTypes] = useState({}); // 🍵 เก็บ ID ผงชาที่เลือกเปลี่ยนแยกตามเมนู
 
   const [editingRecipeModal, setEditingRecipeModal] = useState(null);
   const [recipeFilterCat, setRecipeFilterCat] = useState('ทั้งหมด');
@@ -270,7 +283,6 @@ export default function OwnerDashboard() {
     const cleanItems = recipeItems.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
-    // ส่งเฉพาะคอลัมน์หลักที่มีอยู่จริงใน DB ป้องกัน Error Schema Cache
     const payload = {
       menu_name: menuName.trim(), 
       cogs, 
@@ -278,12 +290,13 @@ export default function OwnerDashboard() {
       base_price: Number(basePrice) || 0,
       target_gp: Number(targetGP) || 30, 
       has_milk_option: hasMilkOption
+      // ตัด has_tea_option ออกเพื่อป้องกัน Error Schema Cache ใน DB ที่ยังไม่ได้สร้างคอลัมน์นี้
     };
 
     const { error } = await supabase.from('recipes').insert([payload]);
     if (!error) {
       alert('บันทึกสูตรสำเร็จ!');
-      setMenuName(''); setRecipeItems([{ ingredient_id: '', qty: '' }]); setBasePrice(''); setHasTeaOption(false); setHasMilkOption(false); fetchOwnerData();
+      setMenuName(''); setRecipeItems([{ ingredient_id: '', qty: '' }]); setBasePrice(''); fetchOwnerData();
     } else { alert('Error: ' + error.message); }
   }
 
@@ -300,6 +313,7 @@ export default function OwnerDashboard() {
       base_price: Number(editingRecipeModal.base_price) || 0,
       target_gp: Number(editingRecipeModal.target_gp) || 30,
       has_milk_option: editingRecipeModal.has_milk_option || false
+      // ตัด has_tea_option ออกเพื่อความปลอดภัย 100% กับ Database ปัจจุบัน
     };
 
     const { error } = await supabase.from('recipes').update(payload).eq('id', editingRecipeModal.id);
@@ -313,9 +327,11 @@ export default function OwnerDashboard() {
     if (!error) fetchOwnerData();
   }
 
-  // 🍵 ฟังก์ชันคำนวณต้นทุนรวม (COGS) รองรับทั้งการเปลี่ยนนม และการเปลี่ยนผงชา (ใช้ปริมาณกรัมตามสูตรตั้งต้นเดิม)
+  // 🍵 ฟังก์ชันคำนวณต้นทุนรวม (COGS) รองรับทั้งการเปลี่ยนนม และการเปลี่ยนผงชา (อัตโนมัติสำหรับเมนูชา)
   function calculateRecipeCost(rec, milkType, teaIngId) {
     let totalCost = 0;
+    const isTeaMenu = checkIfMenuHasTea(rec, ingredients);
+
     (rec.ingredients_detail || []).forEach(item => {
       const orig = ingredients.find(i => i.id === Number(item.ingredient_id));
       if (!orig) return;
@@ -331,8 +347,8 @@ export default function OwnerDashboard() {
         }
       }
 
-      // 2. 🍵 เงื่อนไขเปลี่ยนผงชา (เช็คจากหมวดวัตถุดิบชาหรือชื่อที่เกี่ยวข้อง และมีการเลือกผงชาใหม่จากดรอปดาวน์)
-      if (teaIngId && Number(teaIngId) > 0) {
+      // 2. 🍵 เงื่อนไขเปลี่ยนผงชา (ทำงานอัตโนมัติกับเมนูชา โดยใช้ปริมาณกรัมเดิม แต่เปลี่ยนราคาตามผงชาที่เลือก)
+      if (isTeaMenu && teaIngId && Number(teaIngId) > 0) {
         const origCat = orig.category || '';
         const origName = (orig.name || '').toLowerCase();
         if (origCat === 'เมล็ดกาแฟ/ชา' || origName.includes('tea') || origName.includes('ชา') || origName.includes('matcha') || origName.includes('hojicha')) {
@@ -882,15 +898,11 @@ export default function OwnerDashboard() {
               <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
                 <input type="text" placeholder="ชื่อเมนู เช่น Latte, Americano, Matcha, Hojicha" value={menuName} onChange={(e) => setMenuName(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium" />
                 
-                {/* 🍵 ตัวเลือกเปิดใช้เปลี่ยนนม และเปลี่ยนผงชา */}
+                {/* 🥛 ตัวเลือกเปิดใช้เปลี่ยนนม */}
                 <div className="flex gap-6 pt-1">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={hasMilkOption} onChange={(e) => setHasMilkOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
                     <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={hasTeaOption} onChange={(e) => setHasTeaOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
-                    <span className="text-xs font-bold text-slate-700">🍵 เปลี่ยนผงชาได้</span>
                   </label>
                 </div>
 
@@ -948,16 +960,10 @@ export default function OwnerDashboard() {
                   const recDelivery = storePrice > 0 && gp < 100 ? storePrice / (1 - gp / 100) : 0;
                   const netDeliveryProfit = recDelivery * (1 - gp / 100) - cogs;
                   const autoCat = getRecipeCategory(rec.menu_name);
+                  const isTeaMenu = checkIfMenuHasTea(rec, ingredients);
 
-                  // 🍵 ดึงรายการวัตถุดิบหมวด "เมล็ดกาแฟ/ชา" มาทำดรอปดาวน์
+                  // 🍵 รายการผงชาจากสต็อก (หมวด เมล็ดกาแฟ/ชา)
                   const teaOptionsList = ingredients.filter(i => (i.category || 'อื่นๆ') === 'เมล็ดกาแฟ/ชา' && i.is_active !== false);
-
-                  // ใช้เช็คเงื่อนไขเปิดใช้งานผงชาจากค่าที่บันทึกหรือเปิดให้ทุกเมนูที่มีส่วนผสมเป็นชาปรับได้
-                  const showTeaDropdown = hasTeaOption || (rec.ingredients_detail || []).some(item => {
-                    const ing = ingredients.find(i => i.id === Number(item.ingredient_id));
-                    const name = (ing?.name || '').toLowerCase();
-                    return ing?.category === 'เมล็ดกาแฟ/ชา' || name.includes('tea') || name.includes('ชา') || name.includes('matcha') || name.includes('hojicha');
-                  });
 
                   return (
                     <div key={rec.id} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
@@ -984,8 +990,8 @@ export default function OwnerDashboard() {
                         </div>
                       )}
 
-                      {/* 🍵 ตัวเลือกผงชา (Dropdown) สำหรับเมนูชา */}
-                      {showTeaDropdown && (
+                      {/* 🍵 ตัวเลือกเปลี่ยนผงชา (แสดงอัตโนมัติสำหรับเมนูชา มัทฉะ โดยดึงจากสต็อกโดยไม่ต้องพึ่งคอลัมน์ DB เพิ่มเติม) */}
+                      {isTeaMenu && (
                         <div className="bg-emerald-50 border border-emerald-200 p-2 rounded-xl flex items-center justify-between text-xs">
                           <span className="font-bold text-emerald-900">🍵 ผงชา:</span>
                           <select value={teaId} onChange={(e) => setSelectedTeaTypes({ ...selectedTeaTypes, [rec.id]: e.target.value })} className="bg-white border border-emerald-300 rounded-lg p-1.5 text-xs font-bold outline-none max-w-[200px]">
