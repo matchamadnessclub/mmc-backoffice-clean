@@ -95,10 +95,10 @@ export default function OwnerDashboard() {
   const [targetGP, setTargetGP] = useState(30);
   const [basePrice, setBasePrice] = useState('');
   const [hasMilkOption, setHasMilkOption] = useState(false);
-  const [hasTeaOption, setHasTeaOption] = useState(false); // 🍵 เพิ่มฟลากสำหรับเปิดใช้งานเปลี่ยนผงชา
+  const [hasTeaOption, setHasTeaOption] = useState(false); 
 
   const [selectedMilkTypes, setSelectedMilkTypes] = useState({});
-  const [selectedTeaTypes, setSelectedTeaTypes] = useState({}); // 🍵 เก็บ ID ผงชาที่เลือกเปลี่ยนแยกตามเมนู
+  const [selectedTeaTypes, setSelectedTeaTypes] = useState({}); 
 
   const [editingRecipeModal, setEditingRecipeModal] = useState(null);
   const [recipeFilterCat, setRecipeFilterCat] = useState('ทั้งหมด');
@@ -270,20 +270,20 @@ export default function OwnerDashboard() {
     const cleanItems = recipeItems.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
+    // ส่งเฉพาะฟิลด์พื้นฐานที่มีในตาราง recipes ชัวร์ 100% ไม่ติด Schema Cache Error
     const payload = {
       menu_name: menuName.trim(), 
       cogs, 
       ingredients_detail: cleanItems,
       base_price: Number(basePrice) || 0,
       target_gp: Number(targetGP) || 30, 
-      has_milk_option: hasMilkOption,
-      has_tea_option: hasTeaOption // 🍵 บันทึกค่าสถานะ
+      has_milk_option: hasMilkOption
     };
 
     const { error } = await supabase.from('recipes').insert([payload]);
     if (!error) {
       alert('บันทึกสูตรสำเร็จ!');
-      setMenuName(''); setRecipeItems([{ ingredient_id: '', qty: '' }]); setBasePrice(''); fetchOwnerData();
+      setMenuName(''); setRecipeItems([{ ingredient_id: '', qty: '' }]); setBasePrice(''); setHasTeaOption(false); setHasMilkOption(false); fetchOwnerData();
     } else { alert('Error: ' + error.message); }
   }
 
@@ -293,14 +293,14 @@ export default function OwnerDashboard() {
     const cleanItems = editingRecipeModal.ingredients_detail.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
+    // ตัด has_tea_option ออกจากการอัปเดตลงฐานข้อมูล เพื่อป้องกันปัญหา Error คอลัมน์ยังไม่ถูกสร้างใน Supabase
     const payload = {
       menu_name: editingRecipeModal.menu_name.trim(), 
       cogs, 
       ingredients_detail: cleanItems,
       base_price: Number(editingRecipeModal.base_price) || 0,
       target_gp: Number(editingRecipeModal.target_gp) || 30,
-      has_milk_option: editingRecipeModal.has_milk_option || false,
-      has_tea_option: editingRecipeModal.has_tea_option || false // 🍵 อัปเดตสถานะใน modal
+      has_milk_option: editingRecipeModal.has_milk_option || false
     };
 
     const { error } = await supabase.from('recipes').update(payload).eq('id', editingRecipeModal.id);
@@ -314,7 +314,7 @@ export default function OwnerDashboard() {
     if (!error) fetchOwnerData();
   }
 
-  // 🍵 ฟังก์ชันคำนวณต้นทุนรวม (COGS) รองรับทั้งการเปลี่ยนชนิดนม และการเปลี่ยนผงชา (ใช้ปริมาณเท่าเดิมจากสูตรตั้งต้น)
+  // 🍵 คำนวณต้นทุนโดยเปิดให้ทุกเมนูที่มีส่วนผสมเป็นชา/มัทฉะ สามารถเลือกสลับผงชาได้ทันที
   function calculateRecipeCost(rec, milkType, teaIngId) {
     let totalCost = 0;
     (rec.ingredients_detail || []).forEach(item => {
@@ -332,14 +332,14 @@ export default function OwnerDashboard() {
         }
       }
 
-      // 2. 🍵 เงื่อนไขเปลี่ยนผงชา (เช็คจากหมวดเมล็ดกาแฟ/ชา หรือชื่อที่สื่อถึงชา/มัทฉะ)
-      if (rec.has_tea_option && teaIngId && Number(teaIngId) > 0) {
-        const origCat = orig.category || '';
-        const origName = (orig.name || '').toLowerCase();
-        if (origCat === 'เมล็ดกาแฟ/ชา' || origName.includes('tea') || origName.includes('ชา') || origName.includes('matcha') || origName.includes('hojicha')) {
-          const foundTea = ingredients.find(i => i.id === Number(teaIngId));
-          if (foundTea) active = foundTea;
-        }
+      // 2. 🍵 เงื่อนไขเปลี่ยนผงชา (หากเมนูมีส่วนผสมเป็นชาหรือมัทฉะ จะเปิดให้เลือกเปลี่ยนผงชาได้อัตโนมัติทันที)
+      const origCat = orig.category || '';
+      const origName = (orig.name || '').toLowerCase();
+      const isTeaItem = origCat === 'เมล็ดกาแฟ/ชา' || origName.includes('tea') || origName.includes('ชา') || origName.includes('matcha') || origName.includes('hojicha');
+
+      if (isTeaItem && teaIngId && Number(teaIngId) > 0) {
+        const foundTea = ingredients.find(i => i.id === Number(teaIngId));
+        if (foundTea) active = foundTea;
       }
 
       totalCost += getUnitCost(active) * Number(item.qty);
@@ -561,10 +561,6 @@ export default function OwnerDashboard() {
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!editingRecipeModal.has_milk_option} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, has_milk_option: e.target.checked })} className="w-4 h-4 accent-slate-800" />
                   <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={!!editingRecipeModal.has_tea_option} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, has_tea_option: e.target.checked })} className="w-4 h-4 accent-slate-800" />
-                  <span className="text-xs font-bold text-slate-700">🍵 เปลี่ยนผงชาได้</span>
                 </label>
               </div>
 
@@ -887,15 +883,11 @@ export default function OwnerDashboard() {
               <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
                 <input type="text" placeholder="ชื่อเมนู เช่น Latte, Americano, Matcha, Hojicha" value={menuName} onChange={(e) => setMenuName(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium" />
                 
-                {/* 🍵 ตัวเลือกเปิดใช้เปลี่ยนนม และเปลี่ยนผงชา */}
+                {/* ตัวเลือกเปลี่ยนชนิดนม */}
                 <div className="flex gap-6 pt-1">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={hasMilkOption} onChange={(e) => setHasMilkOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
                     <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={hasTeaOption} onChange={(e) => setHasTeaOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
-                    <span className="text-xs font-bold text-slate-700">🍵 เปลี่ยนผงชาได้</span>
                   </label>
                 </div>
 
@@ -954,7 +946,14 @@ export default function OwnerDashboard() {
                   const netDeliveryProfit = recDelivery * (1 - gp / 100) - cogs;
                   const autoCat = getRecipeCategory(rec.menu_name);
 
-                  // 🍵 ดึงรายชื่อผงชาจากสต็อก (หมวด เมล็ดกาแฟ/ชา) มาทำดรอปดาวน์
+                  // 🍵 ดึงรายชื่อผงชาจากสต็อก (หมวด เมล็ดกาแฟ/ชา) มาทำดรอปดาวน์ให้ทุกเมนูที่มีส่วนผสมเป็นชาอัตโนมัติ
+                  const hasTeaInRecipe = (rec.ingredients_detail || []).some(item => {
+                    const ing = ingredients.find(i => i.id === Number(item.ingredient_id));
+                    if (!ing) return false;
+                    const c = ing.category || '';
+                    const name = (ing.name || '').toLowerCase();
+                    return c === 'เมล็ดกาแฟ/ชา' || name.includes('tea') || name.includes('ชา') || name.includes('matcha') || name.includes('hojicha');
+                  });
                   const teaOptionsList = ingredients.filter(i => (i.category || 'อื่นๆ') === 'เมล็ดกาแฟ/ชา' && i.is_active !== false);
 
                   return (
@@ -982,8 +981,8 @@ export default function OwnerDashboard() {
                         </div>
                       )}
 
-                      {/* 🍵 ตัวเลือกผงชา (Dropdown) */}
-                      {rec.has_tea_option && (
+                      {/* 🍵 ตัวเลือกเปลี่ยนผงชาอัตโนมัติสำหรับเมนูชา/มัทฉะ */}
+                      {hasTeaInRecipe && (
                         <div className="bg-emerald-50 border border-emerald-200 p-2 rounded-xl flex items-center justify-between text-xs">
                           <span className="font-bold text-emerald-900">🍵 ผงชา:</span>
                           <select value={teaId} onChange={(e) => setSelectedTeaTypes({ ...selectedTeaTypes, [rec.id]: e.target.value })} className="bg-white border border-emerald-300 rounded-lg p-1.5 text-xs font-bold outline-none max-w-[200px]">
