@@ -71,8 +71,10 @@ export default function OwnerDashboard() {
   const [loading, setLoading] = useState(false);
 
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
+
   const [staffMessages, setStaffMessages] = useState([]);
   const [selectedStaffMsg, setSelectedStaffMsg] = useState(null);
+
   const [internalMsgs, setInternalMsgs] = useState([]);
   const [ownerName, setOwnerName] = useState('');
   const [chatText, setChatText] = useState('');
@@ -92,13 +94,10 @@ export default function OwnerDashboard() {
 
   const [menuName, setMenuName] = useState('');
   const [recipeItems, setRecipeItems] = useState([{ ingredient_id: '', qty: '' }]);
-  const [addOnOptions, setAddOnOptions] = useState([{ name: '', ingredient_id: '', qty: '' }]);
   const [targetGP, setTargetGP] = useState(30);
   const [basePrice, setBasePrice] = useState('');
-  const [actualDeliveryPrice, setActualDeliveryPrice] = useState('');
   const [hasMilkOption, setHasMilkOption] = useState(false);
   const [selectedMilkTypes, setSelectedMilkTypes] = useState({});
-  const [selectedAddons, setSelectedAddons] = useState({});
   const [editingRecipeModal, setEditingRecipeModal] = useState(null);
   const [recipeFilterCat, setRecipeFilterCat] = useState('ทั้งหมด');
   const [searchRecipeQuery, setSearchRecipeQuery] = useState('');
@@ -267,16 +266,14 @@ export default function OwnerDashboard() {
   async function handleSaveRecipeToDB() {
     if (!menuName.trim()) { alert('กรุณาใส่ชื่อเมนูก่อนครับ'); return; }
     const cleanItems = recipeItems.filter(item => item.ingredient_id !== '');
-    const cleanAddons = addOnOptions.filter(opt => opt.name.trim() !== '' && opt.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
+    // ตัดฟิลด์ menu_category ออกเพื่อไม่ให้ Error schema cache ของ Supabase
     const payload = {
       menu_name: menuName.trim(), 
       cogs, 
       ingredients_detail: cleanItems,
-      addons_detail: cleanAddons,
-      base_price: Number(basePrice) || 0,
-      actual_delivery_price: Number(actualDeliveryPrice) || 0,
+      base_price: Number(basePrice) || 0, 
       target_gp: Number(targetGP) || 30, 
       has_milk_option: hasMilkOption
     };
@@ -284,7 +281,7 @@ export default function OwnerDashboard() {
     const { error } = await supabase.from('recipes').insert([payload]);
     if (!error) {
       alert('บันทึกสูตรสำเร็จ!');
-      setMenuName(''); setRecipeItems([{ ingredient_id: '', qty: '' }]); setAddOnOptions([{ name: '', ingredient_id: '', qty: '' }]); setBasePrice(''); setActualDeliveryPrice(''); fetchOwnerData();
+      setMenuName(''); setRecipeItems([{ ingredient_id: '', qty: '' }]); setBasePrice(''); fetchOwnerData();
     } else { alert('Error: ' + error.message); }
   }
 
@@ -292,16 +289,14 @@ export default function OwnerDashboard() {
     e.preventDefault();
     if (!editingRecipeModal) return;
     const cleanItems = editingRecipeModal.ingredients_detail.filter(item => item.ingredient_id !== '');
-    const cleanAddons = (editingRecipeModal.addons_detail || []).filter(opt => opt.name.trim() !== '' && opt.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
+    // ตัดฟิลด์ menu_category ออกเช่นกัน
     const payload = {
       menu_name: editingRecipeModal.menu_name.trim(), 
       cogs, 
       ingredients_detail: cleanItems,
-      addons_detail: cleanAddons,
-      base_price: Number(editingRecipeModal.base_price) || 0,
-      actual_delivery_price: Number(editingRecipeModal.actual_delivery_price) || 0,
+      base_price: Number(editingRecipeModal.base_price) || 0, 
       target_gp: Number(editingRecipeModal.target_gp) || 30,
       has_milk_option: editingRecipeModal.has_milk_option || false
     };
@@ -317,7 +312,7 @@ export default function OwnerDashboard() {
     if (!error) fetchOwnerData();
   }
 
-  function calculateRecipeCost(rec, milkType, activeAddonsMap) {
+  function calculateRecipeCostWithMilk(rec, milkType) {
     let totalCost = 0;
     (rec.ingredients_detail || []).forEach(item => {
       const orig = ingredients.find(i => i.id === Number(item.ingredient_id));
@@ -333,18 +328,6 @@ export default function OwnerDashboard() {
       }
       totalCost += getUnitCost(active) * Number(item.qty);
     });
-
-    if (activeAddonsMap && rec.addons_detail) {
-      rec.addons_detail.forEach((addon, idx) => {
-        if (activeAddonsMap[idx]) {
-          const addonIng = ingredients.find(i => i.id === Number(addon.ingredient_id));
-          if (addonIng) {
-            totalCost += getUnitCost(addonIng) * Number(addon.qty || 0);
-          }
-        }
-      });
-    }
-
     return totalCost;
   }
 
@@ -560,10 +543,9 @@ export default function OwnerDashboard() {
                 <input type="checkbox" checked={!!editingRecipeModal.has_milk_option} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, has_milk_option: e.target.checked })} className="w-4 h-4 accent-slate-800" />
                 <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
               </label>
-              
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-slate-700">ส่วนผสมหลักต่อ 1 แก้ว</label>
+                  <label className="text-xs font-bold text-slate-700">ส่วนผสมต่อ 1 แก้ว</label>
                   <button type="button" onClick={() => setEditingRecipeModal({ ...editingRecipeModal, ingredients_detail: [...editingRecipeModal.ingredients_detail, { ingredient_id: '', qty: '' }] })} className="text-xs bg-slate-700 text-white font-bold px-3 py-1 rounded-lg">+ เพิ่ม</button>
                 </div>
                 {editingRecipeModal.ingredients_detail.map((item, idx) => (
@@ -585,37 +567,8 @@ export default function OwnerDashboard() {
                   </div>
                 ))}
               </div>
-
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-slate-700">➕ ตัวเลือกเสริม (Add-on Options)</label>
-                  <button type="button" onClick={() => setEditingRecipeModal({ ...editingRecipeModal, addons_detail: [...(editingRecipeModal.addons_detail || []), { name: '', ingredient_id: '', qty: '' }] })} className="text-xs bg-slate-700 text-white font-bold px-3 py-1 rounded-lg">+ เพิ่มออปชัน</button>
-                </div>
-                {(editingRecipeModal.addons_detail || []).map((addon, idx) => (
-                  <div key={idx} className="flex gap-2 items-center bg-slate-50 p-2 rounded-xl border">
-                    <input type="text" placeholder="ชื่อออปชัน เช่น เพิ่มช็อต" value={addon.name} onChange={(e) => {
-                      const list = [...editingRecipeModal.addons_detail]; list[idx].name = e.target.value;
-                      setEditingRecipeModal({ ...editingRecipeModal, addons_detail: list });
-                    }} className="w-1/3 bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none" />
-                    <select value={addon.ingredient_id} onChange={(e) => {
-                      const list = [...editingRecipeModal.addons_detail]; list[idx].ingredient_id = e.target.value;
-                      setEditingRecipeModal({ ...editingRecipeModal, addons_detail: list });
-                    }} className="flex-1 bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none">
-                      <option value="">-- เลือกวัตถุดิบ --</option>
-                      {ingredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit_type})</option>)}
-                    </select>
-                    <input type="number" step="0.01" placeholder="ปริมาณ" value={addon.qty} onChange={(e) => {
-                      const list = [...editingRecipeModal.addons_detail]; list[idx].qty = e.target.value;
-                      setEditingRecipeModal({ ...editingRecipeModal, addons_detail: list });
-                    }} className="w-20 bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none" />
-                    <button type="button" onClick={() => setEditingRecipeModal({ ...editingRecipeModal, addons_detail: editingRecipeModal.addons_detail.filter((_, i) => i !== idx) })} className="text-red-600 font-bold px-1">✕</button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-xs font-semibold text-slate-600 mb-1">ราคาหน้าร้าน</label><input type="number" value={editingRecipeModal.base_price ?? ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, base_price: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ราคาเดลิเวอรีจริง</label><input type="number" value={editingRecipeModal.actual_delivery_price ?? ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, actual_delivery_price: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                 <div><label className="block text-xs font-semibold text-slate-600 mb-1">GP (%)</label><input type="number" value={editingRecipeModal.target_gp ?? ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, target_gp: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
               </div>
               <div className="flex gap-2 pt-2">
@@ -904,17 +857,14 @@ export default function OwnerDashboard() {
           <div className="space-y-6">
             <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
               <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🥤 เพิ่มสูตรเครื่องดื่มใหม่ & คำนวณต้นทุน</h2>
-              
               <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
-                <input type="text" placeholder="ชื่อเมนู เช่น Latte, Americano, Matcha" value={menuName} onChange={(e) => setMenuName(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium" />
-                
+                <input type="text" placeholder="ชื่อเมนู เช่น Latte, Americano, Matcha, Hojicha" value={menuName} onChange={(e) => setMenuName(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium" />
                 <label className="flex items-center gap-2 pt-1 cursor-pointer">
                   <input type="checkbox" checked={hasMilkOption} onChange={(e) => setHasMilkOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
                   <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
                 </label>
-                
                 <div className="space-y-2 pt-2">
-                  <div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-700">ส่วนผสมหลักต่อ 1 แก้ว</label><button type="button" onClick={() => setRecipeItems([...recipeItems, { ingredient_id: '', qty: '' }])} className="text-xs bg-slate-700 text-white font-bold px-3 py-1.5 rounded-lg">+ เพิ่มส่วนผสม</button></div>
+                  <div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-700">ส่วนผสมต่อ 1 แก้ว</label><button type="button" onClick={() => setRecipeItems([...recipeItems, { ingredient_id: '', qty: '' }])} className="text-xs bg-slate-700 text-white font-bold px-3 py-1.5 rounded-lg">+ เพิ่ม</button></div>
                   {recipeItems.map((item, idx) => (
                     <div key={idx} className="flex gap-2 items-center">
                       <select value={item.ingredient_id} onChange={(e) => {
@@ -930,38 +880,14 @@ export default function OwnerDashboard() {
                     </div>
                   ))}
                 </div>
-
-                <div className="space-y-2 pt-2 border-t border-slate-200">
-                  <div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-700">➕ ตัวเลือกเสริม (Add-on Options)</label><button type="button" onClick={() => setAddOnOptions([...addOnOptions, { name: '', ingredient_id: '', qty: '' }])} className="text-xs bg-slate-700 text-white font-bold px-3 py-1.5 rounded-lg">+ เพิ่มออปชัน</button></div>
-                  {addOnOptions.map((opt, idx) => (
-                    <div key={idx} className="flex gap-2 items-center bg-slate-50 p-2.5 rounded-xl border">
-                      <input type="text" placeholder="ชื่อออปชัน เช่น เพิ่มช็อต" value={opt.name} onChange={(e) => {
-                        const list = [...addOnOptions]; list[idx].name = e.target.value; setAddOnOptions(list);
-                      }} className="w-1/3 bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none" />
-                      <select value={opt.ingredient_id} onChange={(e) => {
-                        const list = [...addOnOptions]; list[idx].ingredient_id = e.target.value; setAddOnOptions(list);
-                      }} className="flex-1 bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none">
-                        <option value="">-- เลือกวัตถุดิบ --</option>
-                        {ingredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit_type})</option>)}
-                      </select>
-                      <input type="number" step="0.01" placeholder="ปริมาณ" value={opt.qty} onChange={(e) => {
-                        const list = [...addOnOptions]; list[idx].qty = e.target.value; setAddOnOptions(list);
-                      }} className="w-24 bg-white border border-slate-300 rounded-lg p-2 text-xs outline-none" />
-                      <button type="button" onClick={() => setAddOnOptions(addOnOptions.filter((_, i) => i !== idx))} className="text-red-600 font-bold px-1">✕</button>
-                    </div>
-                  ))}
-                </div>
-
                 <div className="bg-emerald-50 border border-emerald-300 p-3.5 rounded-xl flex justify-between items-center text-sm font-bold text-emerald-900">
-                  <span>ต้นทุนพื้นฐาน (COGS):</span>
+                  <span>ต้นทุนรวม (COGS):</span>
                   <span className="text-lg font-black">{recipeItems.reduce((sum, it) => sum + getUnitCost(ingredients.find(i => i.id === Number(it.ingredient_id))) * Number(it.qty), 0).toFixed(2)} บาท</span>
                 </div>
               </div>
-
               <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><label className="text-xs font-bold text-slate-600 mb-1 block">ราคาหน้าร้าน</label><input type="number" placeholder="60" value={basePrice} onChange={(e) => setBasePrice(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm outline-none font-medium" /></div>
-                  <div><label className="text-xs font-bold text-slate-600 mb-1 block">ราคาขายจริงเดลิเวอรี</label><input type="number" placeholder="85" value={actualDeliveryPrice} onChange={(e) => setActualDeliveryPrice(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm outline-none font-medium" /></div>
                   <div><label className="text-xs font-bold text-slate-600 mb-1 block">GP เดลิเวอรี (%)</label><input type="number" placeholder="30" value={targetGP} onChange={(e) => setTargetGP(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm outline-none font-medium" /></div>
                 </div>
                 <button onClick={handleSaveRecipeToDB} className="w-full bg-gradient-to-r from-emerald-700 to-teal-800 text-white font-bold py-3 rounded-xl text-sm shadow">💾 บันทึกสูตรนี้</button>
@@ -983,17 +909,12 @@ export default function OwnerDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {filteredRecipes.length > 0 ? filteredRecipes.map(rec => {
                   const mType = selectedMilkTypes[rec.id] || 'fresh';
-                  const activeAddons = selectedAddons[rec.id] || {};
-                  const cogs = calculateRecipeCost(rec, mType, activeAddons);
+                  const cogs = calculateRecipeCostWithMilk(rec, mType);
                   const storePrice = Number(rec.base_price) || 0;
-                  const actualDelPrice = Number(rec.actual_delivery_price) || 0;
                   const gp = Number(rec.target_gp) || 30;
                   const storeProfit = storePrice > 0 ? storePrice - cogs : 0;
-                  
-                  const recommendedDeliveryPrice = storePrice > 0 && gp < 100 ? storePrice / (1 - gp / 100) : 0;
-                  const netActualDeliveryRevenue = actualDelPrice * (1 - gp / 100);
-                  const netActualDeliveryProfit = actualDelPrice > 0 ? netActualDeliveryRevenue - cogs : 0;
-
+                  const recDelivery = storePrice > 0 && gp < 100 ? storePrice / (1 - gp / 100) : 0;
+                  const netDeliveryProfit = recDelivery * (1 - gp / 100) - cogs;
                   const autoCat = getRecipeCategory(rec.menu_name);
 
                   return (
@@ -1008,7 +929,6 @@ export default function OwnerDashboard() {
                           <button onClick={() => handleDeleteRecipe(rec.id)} className="bg-red-600 text-white text-xs px-2.5 py-1 rounded-lg font-bold">🗑️ ลบ</button>
                         </div>
                       </div>
-
                       {rec.has_milk_option && (
                         <div className="bg-amber-50 border border-amber-200 p-2 rounded-xl flex items-center justify-between text-xs">
                           <span className="font-bold text-amber-900">🥛 นม:</span>
@@ -1019,29 +939,8 @@ export default function OwnerDashboard() {
                           </div>
                         </div>
                       )}
-
-                      {Array.isArray(rec.addons_detail) && rec.addons_detail.length > 0 && (
-                        <div className="bg-slate-50 border border-slate-200 p-2.5 rounded-xl space-y-1.5 text-xs">
-                          <span className="font-bold text-slate-700 block">➕ เลือกออปชันเสริม:</span>
-                          <div className="flex flex-wrap gap-2">
-                            {rec.addons_detail.map((addon, aIdx) => {
-                              const isChecked = !!activeAddons[aIdx];
-                              return (
-                                <label key={aIdx} className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-semibold cursor-pointer transition ${isChecked ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-700 border-slate-300'}`}>
-                                  <input type="checkbox" checked={isChecked} onChange={(e) => {
-                                    const curr = selectedAddons[rec.id] || {};
-                                    setSelectedAddons({ ...selectedAddons, [rec.id]: { ...curr, [aIdx]: e.target.checked } });
-                                  }} className="accent-slate-800 hidden" />
-                                  <span>{addon.name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
                       <div className="text-xs space-y-2 text-slate-600">
-                        <div className="flex justify-between"><span>COGS รวมออปชัน:</span><span className="font-bold text-red-600">{cogs.toFixed(2)} ฿</span></div>
+                        <div className="flex justify-between"><span>COGS [{mType.toUpperCase()}]:</span><span className="font-bold text-red-600">{cogs.toFixed(2)} ฿</span></div>
                         <div className="grid grid-cols-2 gap-2">
                           <div className="bg-slate-50 p-2.5 rounded-lg border">
                             <p className="font-bold text-slate-700 text-[11px]">🏪 หน้าร้าน</p>
@@ -1050,9 +949,8 @@ export default function OwnerDashboard() {
                           </div>
                           <div className="bg-emerald-50/70 p-2.5 rounded-lg border">
                             <p className="font-bold text-emerald-900 text-[11px]">🛵 เดลิเวอรี ({gp}%)</p>
-                            <p>แนะนำ: {Math.ceil(recommendedDeliveryPrice)} ฿</p>
-                            <p>ตั้งขายจริง: <span className="font-bold text-blue-800">{actualDelPrice > 0 ? `${actualDelPrice} ฿` : 'ยังไม่ตั้ง'}</span></p>
-                            <p>กำไรสุทธิ: <span className="font-bold text-emerald-700">{actualDelPrice > 0 ? `${netActualDeliveryProfit.toFixed(2)} ฿` : '-'}</span></p>
+                            <p>ควรขาย: {Math.ceil(recDelivery)} ฿</p>
+                            <p>กำไร: <span className="font-bold text-emerald-700">{netDeliveryProfit.toFixed(2)} ฿</span></p>
                           </div>
                         </div>
                       </div>
