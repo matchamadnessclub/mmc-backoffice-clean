@@ -153,16 +153,14 @@ export default function OwnerDashboard() {
       const { data: sales } = await supabase.from('daily_sales').select('*').eq('date', selectedDate).maybeSingle();
       setSalesData(sales || null);
 
-      const { data: exp } = await supabase.from('expenses').select('*').eq('date', selectedDate);
-      setExpensesData(exp || []);
-
-      // ดึงข้อมูลสต็อกรายวันที่พนักงานบันทึกไว้ของวันนี้
-      const { data: stockLog } = await supabase.from('daily_stock_logs').select('*').eq('date', selectedDate).maybeSingle();
-      if (stockLog && stockLog.counts) {
-        setDailyStockData(stockLog.counts);
+      if (sales && sales.stock_counts) {
+        setDailyStockData(sales.stock_counts);
       } else {
         setDailyStockData({});
       }
+
+      const { data: exp } = await supabase.from('expenses').select('*').eq('date', selectedDate);
+      setExpensesData(exp || []);
 
       const { data: ing } = await supabase.from('ingredients').select('*').order('category', { ascending: true });
       if (ing) setIngredients(ing);
@@ -199,7 +197,6 @@ export default function OwnerDashboard() {
     }
   }
 
-  // เปิด Modal แก้ไขยอดขาย + สต็อกรายวันพร้อมกัน
   function openEditSalesModal() {
     verifyOwnerPasswordAndExecute(() => {
       setSalesForm({
@@ -214,7 +211,6 @@ export default function OwnerDashboard() {
         staff_name: salesData?.staff_name || ownerName || 'เจ้าของร้าน'
       });
 
-      // โหลดค่าสต็อกปัจจุบันมาใส่ในฟอร์ม Modal
       const initialCounts = {};
       ingredients.forEach(i => {
         initialCounts[i.id] = dailyStockData[i.id] !== undefined ? dailyStockData[i.id] : getStock(i);
@@ -225,10 +221,9 @@ export default function OwnerDashboard() {
     });
   }
 
-  // บันทึกยอดขายและสต็อกรายวันย้อนหลังลง Database พร้อมกัน
   async function handleSaveSalesAndStockUpdate(e) {
     e.preventDefault();
-    const salesPayload = {
+    const payload = {
       date: selectedDate,
       cash: Number(salesForm.cash) || 0,
       qr: Number(salesForm.qr) || 0,
@@ -238,23 +233,13 @@ export default function OwnerDashboard() {
       linemanth: Number(salesForm.linemanth) || 0,
       actual_cash: Number(salesForm.actual_cash) || 0,
       total_cups: Number(salesForm.total_cups) || 0,
-      staff_name: salesForm.staff_name || 'เจ้าของร้าน'
-    };
-
-    const stockLogPayload = {
-      date: selectedDate,
-      counts: modalStockCounts,
-      updated_at: new Date().toISOString()
+      staff_name: salesForm.staff_name || 'เจ้าของร้าน',
+      stock_counts: modalStockCounts
     };
 
     try {
-      // 1. บันทึกยอดขาย
-      const { error: salesErr } = await supabase.from('daily_sales').upsert([salesPayload], { onConflict: 'date' });
-      if (salesErr) throw salesErr;
-
-      // 2. บันทึกสต็อกรายวัน
-      const { error: stockErr } = await supabase.from('daily_stock_logs').upsert([stockLogPayload], { onConflict: 'date' });
-      if (stockErr) throw stockErr;
+      const { error } = await supabase.from('daily_sales').upsert([payload], { onConflict: 'date' });
+      if (error) throw error;
 
       alert(`บันทึกยอดขายและสต็อกรายวันของวันที่ ${selectedDate} สำเร็จ!`);
       setEditingSalesModal(false);
@@ -533,7 +518,6 @@ export default function OwnerDashboard() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-200 via-zinc-300 to-slate-400 text-slate-800 p-4 md:p-8">
 
-      {/* Modal ยืนยันรหัสผ่านเจ้าของร้าน */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-sm w-full p-6 space-y-4">
@@ -561,7 +545,6 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* Modal แก้ไขยอดขาย & สต็อกรายวันย้อนหลัง */}
       {editingSalesModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
@@ -571,7 +554,6 @@ export default function OwnerDashboard() {
             </div>
             
             <form onSubmit={handleSaveSalesAndStockUpdate} className="space-y-5">
-              {/* ส่วนยอดขาย */}
               <div className="space-y-3">
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 ยอดขายประจำวัน</h4>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -589,7 +571,6 @@ export default function OwnerDashboard() {
                 </div>
               </div>
 
-              {/* ส่วนสต็อกรายวันที่พนักงานต้องกรอก */}
               <div className="space-y-3 pt-4 border-t border-slate-200">
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📦 สต็อกรายวัน (จำนวนคงเหลือในวันนี้)</h4>
                 <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
@@ -796,7 +777,6 @@ export default function OwnerDashboard() {
                   </div>
                 </div>
 
-                {/* แสดงผลสต็อกรายวันที่บันทึกไว้ในวันนั้น */}
                 <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📦 สต็อกคงเหลือประจำวัน ({selectedDate})</h3>
                   {Object.keys(dailyStockData).length > 0 ? (
