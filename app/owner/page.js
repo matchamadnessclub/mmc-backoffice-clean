@@ -153,8 +153,17 @@ export default function OwnerDashboard() {
       const { data: sales } = await supabase.from('daily_sales').select('*').eq('date', selectedDate).maybeSingle();
       setSalesData(sales || null);
 
-      if (sales && sales.stock_counts) {
-        setDailyStockData(sales.stock_counts);
+      if (sales && sales.note) {
+        try {
+          const parsed = JSON.parse(sales.note);
+          if (parsed && parsed.stock_counts) {
+            setDailyStockData(parsed.stock_counts);
+          } else {
+            setDailyStockData({});
+          }
+        } catch {
+          setDailyStockData({});
+        }
       } else {
         setDailyStockData({});
       }
@@ -223,6 +232,10 @@ export default function OwnerDashboard() {
 
   async function handleSaveSalesAndStockUpdate(e) {
     e.preventDefault();
+    
+    // บันทึกข้อมูลสต็อกรวมไว้ในฟิลด์ note (แปลงเป็น JSON string) เพื่อหลีกเลี่ยงปัญหาเรื่องคอลัมน์ขาดหาย
+    const noteData = JSON.stringify({ stock_counts: modalStockCounts });
+
     const payload = {
       date: selectedDate,
       cash: Number(salesForm.cash) || 0,
@@ -234,7 +247,7 @@ export default function OwnerDashboard() {
       actual_cash: Number(salesForm.actual_cash) || 0,
       total_cups: Number(salesForm.total_cups) || 0,
       staff_name: salesForm.staff_name || 'เจ้าของร้าน',
-      stock_counts: modalStockCounts
+      note: noteData
     };
 
     try {
