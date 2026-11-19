@@ -14,7 +14,7 @@ const RECIPE_CATEGORIES = [
   '🥤 เมนูอื่นๆ (Others)'
 ];
 
-// 🔑 ตั้งรหัสผ่านของเจ้าของร้านสำหรับปลดล็อกแก้ไขย้อนหลังตรงนี้
+// 🔑 รหัสผ่านเจ้าของร้านสำหรับปลดล็อกแก้ไขย้อนหลัง
 const OWNER_PASSWORD = '1234';
 
 function getCategoryIcon(cat) {
@@ -45,13 +45,6 @@ function getUnitCost(ing) {
 }
 function todayLocal() { return new Date().toLocaleDateString('en-CA'); }
 
-// คำนวณวันที่ย้อนหลังได้ไม่เกิน 2 วันสำหรับพนักงาน
-function getMinAllowedDate() {
-  const d = new Date();
-  d.setDate(d.getDate() - 2);
-  return d.toLocaleDateString('en-CA');
-}
-
 function formatTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
@@ -81,10 +74,16 @@ export default function OwnerDashboard() {
   const [promotionsList, setPromotionsList] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Modal ยืนยันรหัสผ่านเจ้าของร้านเพื่อแก้ไขย้อนหลัง
+  // Modal ยืนยันรหัสผ่านเจ้าของร้าน
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [ownerPasswordInput, setOwnerPasswordInput] = useState('');
   const [pendingAction, setPendingAction] = useState(null);
+
+  // Modal สำหรับแก้ไขยอดขายประจำวัน (รองรับย้อนหลัง)
+  const [editingSalesModal, setEditingSalesModal] = useState(false);
+  const [salesForm, setSalesForm] = useState({
+    cash: '', qr: '', grab: '', lineman: '', grabth: '', linemanth: '', actual_cash: '', total_cups: '', staff_name: 'เจ้าของร้าน'
+  });
 
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
   const [staffMessages, setStaffMessages] = useState([]);
@@ -169,7 +168,7 @@ export default function OwnerDashboard() {
     setLoading(false);
   }
 
-  // ฟังก์ชันตรวจสอบสิทธิ์รหัสผ่านเจ้าของร้านก่อนทำรายการย้อนหลัง
+  // ตรวจสอบรหัสผ่านเจ้าของร้านเมื่อเลือกวันที่ย้อนหลัง
   function verifyOwnerPasswordAndExecute(actionCallback) {
     if (selectedDate !== todayLocal()) {
       setPendingAction(() => actionCallback);
@@ -190,6 +189,51 @@ export default function OwnerDashboard() {
       }
     } else {
       alert('❌ รหัสผ่านเจ้าของร้านไม่ถูกต้อง!');
+    }
+  }
+
+  // เปิดฟอร์มแก้ไขยอดขายประจำวัน (เช็ครหัสผ่านก่อนหากเป็นวันย้อนหลัง)
+  function openEditSalesModal() {
+    verifyOwnerPasswordAndExecute(() => {
+      setSalesForm({
+        cash: salesData?.cash ?? '',
+        qr: salesData?.qr ?? '',
+        grab: salesData?.grab ?? '',
+        lineman: salesData?.lineman ?? '',
+        grabth: salesData?.grabth ?? '',
+        linemanth: salesData?.linemanth ?? '',
+        actual_cash: salesData?.actual_cash ?? '',
+        total_cups: salesData?.total_cups ?? '',
+        staff_name: salesData?.staff_name || ownerName || 'เจ้าของร้าน'
+      });
+      setEditingSalesModal(true);
+    });
+  }
+
+  // บันทึกยอดขายประจำวันที่แก้ไขลง Database
+  async function handleSaveSalesUpdate(e) {
+    e.preventDefault();
+    const payload = {
+      date: selectedDate,
+      cash: Number(salesForm.cash) || 0,
+      qr: Number(salesForm.qr) || 0,
+      grab: Number(salesForm.grab) || 0,
+      lineman: Number(salesForm.lineman) || 0,
+      grabth: Number(salesForm.grabth) || 0,
+      linemanth: Number(salesForm.linemanth) || 0,
+      actual_cash: Number(salesForm.actual_cash) || 0,
+      total_cups: Number(salesForm.total_cups) || 0,
+      staff_name: salesForm.staff_name || 'เจ้าของร้าน'
+    };
+
+    const { error } = await supabase.from('daily_sales').upsert([payload], { onConflict: 'date' });
+    if (!error) {
+      alert(`บันทึกยอดขายวันที่ ${selectedDate} สำเร็จ!`);
+      setEditingSalesModal(false);
+      fetchOwnerData();
+      fetchAllSalesHistory();
+    } else {
+      alert('บันทึกไม่สำเร็จ: ' + error.message);
     }
   }
 
@@ -469,14 +513,14 @@ export default function OwnerDashboard() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-200 via-zinc-300 to-slate-400 text-slate-800 p-4 md:p-8">
 
-      {/* Modal กรอกรหัสผ่านเจ้าของร้านเพื่อแก้ไขย้อนหลัง */}
+      {/* Modal ยืนยันรหัสผ่านเจ้าของร้าน */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-sm w-full p-6 space-y-4">
             <div className="text-center space-y-1">
               <span className="text-3xl">🔒</span>
-              <h3 className="font-bold text-slate-800 text-base">ยืนยันรหัสผ่านเจ้าของร้าน</h3>
-              <p className="text-xs text-slate-500">คุณกำลังแก้ไขข้อมูลของวันที่ย้อนหลัง ({selectedDate}) กรุณาใส่รหัสผ่านเพื่อดำเนินการต่อ</p>
+              <h3 className="font-bold text-slate-800 text-base">รหัสผ่านยืนยันเจ้าของร้าน</h3>
+              <p className="text-xs text-slate-500">คุณกำลังทำรายการแก้ไขข้อมูลย้อนหลังวันที่ (<span className="font-bold text-slate-700">{selectedDate}</span>) กรุณาใส่รหัสผ่าน</p>
             </div>
             <form onSubmit={handlePasswordSubmit} className="space-y-3">
               <input 
@@ -490,7 +534,41 @@ export default function OwnerDashboard() {
               />
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => { setShowPasswordModal(false); setOwnerPasswordInput(''); }} className="flex-1 bg-slate-200 font-bold py-2.5 rounded-xl text-xs">ยกเลิก</button>
-                <button type="submit" className="flex-1 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs shadow">ปลดล็อก</button>
+                <button type="submit" className="flex-1 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs shadow">ยืนยัน</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal แก้ไขยอดขายประจำวัน (รองรับย้อนหลัง) */}
+      {editingSalesModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+              <h3 className="font-bold text-slate-800 text-base">✏️ แก้ไข/บันทึกยอดขายประจำวัน ({selectedDate})</h3>
+              <button onClick={() => setEditingSalesModal(false)} className="bg-slate-100 font-bold px-3 py-1 rounded-full text-xs">✕</button>
+            </div>
+            <form onSubmit={handleSaveSalesUpdate} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอดเงินสด (฿)</label><input type="number" step="0.01" value={salesForm.cash} onChange={(e) => setSalesForm({...salesForm, cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด QR Code (฿)</label><input type="number" step="0.01" value={salesForm.qr} onChange={(e) => setSalesForm({...salesForm, qr: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด Grab (฿)</label><input type="number" step="0.01" value={salesForm.grab} onChange={(e) => setSalesForm({...salesForm, grab: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด LineMan (฿)</label><input type="number" step="0.01" value={salesForm.lineman} onChange={(e) => setSalesForm({...salesForm, lineman: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด GrabTH (฿)</label><input type="number" step="0.01" value={salesForm.grabth} onChange={(e) => setSalesForm({...salesForm, grabth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด LineManTH (฿)</label><input type="number" step="0.01" value={salesForm.linemanth} onChange={(e) => setSalesForm({...salesForm, linemanth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200">
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">เงินสดจริงในลิ้นชัก (฿)</label><input type="number" step="0.01" value={salesForm.actual_cash} onChange={(e) => setSalesForm({...salesForm, actual_cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">จำนวนแก้วรวม</label><input type="number" value={salesForm.total_cups} onChange={(e) => setSalesForm({...salesForm, total_cups: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">ผู้บันทึก</label>
+                <input type="text" value={salesForm.staff_name} onChange={(e) => setSalesForm({...salesForm, staff_name: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setEditingSalesModal(false)} className="w-1/3 bg-slate-200 font-bold py-2.5 rounded-xl text-sm">ยกเลิก</button>
+                <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกยอดขาย</button>
               </div>
             </form>
           </div>
@@ -546,26 +624,6 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {selectedStaffMsg && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-md w-full p-6 space-y-4">
-            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-              <span className="text-xs bg-slate-100 font-bold px-2.5 py-1 rounded-full text-slate-700">{selectedStaffMsg.topic || 'ทั่วไป'}</span>
-              <button onClick={() => setSelectedStaffMsg(null)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-1 rounded-full text-xs">✕</button>
-            </div>
-            <div className="space-y-2">
-              <p className="text-xs text-slate-400">จากพนักงาน: <span className="font-bold text-slate-700">{selectedStaffMsg.staff_name}</span> ({formatTime(selectedStaffMsg.created_at)})</p>
-              <p className="text-sm text-slate-800 whitespace-pre-wrap bg-slate-50 p-4 rounded-xl border border-slate-200 font-medium">{selectedStaffMsg.message}</p>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button onClick={() => { markMessageRead(selectedStaffMsg); setSelectedStaffMsg(null); }} className="flex-1 bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm shadow transition">✓ รับทราบ</button>
-              <button onClick={() => handleDeleteStaffMessage(selectedStaffMsg.id)} className="bg-red-50 hover:bg-red-100 text-red-600 font-bold px-4 py-2.5 rounded-xl text-sm border border-red-200 transition">ลบ</button>
-              <button onClick={() => setSelectedStaffMsg(null)} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-4 py-2.5 rounded-xl text-sm transition">ปิด</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {editingIngredient && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -604,7 +662,6 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* Popup Modal สำหรับแก้ไขสูตร */}
       {editingRecipeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -674,12 +731,10 @@ export default function OwnerDashboard() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-white/90 px-3 py-2 rounded-xl border border-slate-300 shadow-sm">
               <label className="text-xs font-bold text-slate-700">📅 เลือกดูวันที่:</label>
-              {/* อนุญาตให้เลือกย้อนหลังได้ไม่เกิน 2 วัน */}
+              {/* เปิดเลือกดูย้อนหลังได้ทั้งเดือน ทั้งปี แบบอิสระ */}
               <input 
                 type="date" 
                 value={selectedDate} 
-                min={getMinAllowedDate()} 
-                max={todayLocal()} 
                 onChange={(e) => setSelectedDate(e.target.value)} 
                 className="bg-transparent text-sm font-semibold outline-none cursor-pointer" 
               />
@@ -709,8 +764,13 @@ export default function OwnerDashboard() {
         <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center gap-2 flex-wrap">
-              <h2 className="font-bold text-lg text-slate-800">สรุปยอดขายประจำวัน ({selectedDate})</h2>
-              <span className="text-xs bg-slate-300 text-slate-800 px-3 py-1 rounded-full font-bold border border-slate-400">พนักงานผู้บันทึก: {salesData?.staff_name || 'ยังไม่บันทึก'}</span>
+              <div>
+                <h2 className="font-bold text-lg text-slate-800">สรุปยอดขายประจำวัน ({selectedDate})</h2>
+                <p className="text-xs text-slate-500">พนักงานผู้บันทึก: <span className="font-bold">{salesData?.staff_name || 'ยังไม่บันทึก'}</span></p>
+              </div>
+              <button onClick={openEditSalesModal} className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs shadow transition">
+                ✏️ แก้ไข/บันทึกยอดขายของวันนี้
+              </button>
             </div>
 
             {loading ? <p className="text-center text-slate-500 py-8">กำลังโหลด...</p> : salesData ? (
@@ -765,7 +825,14 @@ export default function OwnerDashboard() {
                   </div>
                 )}
               </div>
-            ) : <div className="text-center py-10 text-slate-500 font-medium bg-white rounded-xl border border-slate-300 p-6">ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก ({selectedDate})</div>}
+            ) : (
+              <div className="text-center py-10 text-slate-500 font-medium bg-white rounded-xl border border-slate-300 p-6 space-y-3">
+                <p>ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก ({selectedDate})</p>
+                <button onClick={openEditSalesModal} className="bg-slate-800 text-white font-bold px-5 py-2 rounded-xl text-xs shadow">
+                  + เพิ่มยอดขายของวันนี้
+                </button>
+              </div>
+            )}
 
             <div className="space-y-3 pt-4 border-t border-slate-300">
               <h3 className="font-bold text-base text-slate-800">📋 รายการยอดขายย้อนหลังทั้งหมด (คลิกแถวเพื่อดูรายละเอียด & สลิป)</h3>
@@ -859,7 +926,7 @@ export default function OwnerDashboard() {
             )}
 
             <form onSubmit={handleSaveIngredient} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่ {selectedDate !== todayLocal() && <span className="text-amber-600 text-xs">(⚠️ กำลังเพิ่มย้อนหลัง: {selectedDate})</span>}</h3>
+              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่ {selectedDate !== todayLocal() && <span className="text-amber-600 text-xs">(⚠️ กำลังเพิ่มของวันที่: {selectedDate} ต้องใช้รหัสยืนยัน)</span>}</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <input type="text" placeholder="ชื่อวัตถุดิบ" value={ingName} onChange={(e) => setIngName(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
                 <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
