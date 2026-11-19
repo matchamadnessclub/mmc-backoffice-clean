@@ -71,10 +71,8 @@ export default function OwnerDashboard() {
   const [loading, setLoading] = useState(false);
 
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
-
   const [staffMessages, setStaffMessages] = useState([]);
   const [selectedStaffMsg, setSelectedStaffMsg] = useState(null);
-
   const [internalMsgs, setInternalMsgs] = useState([]);
   const [ownerName, setOwnerName] = useState('');
   const [chatText, setChatText] = useState('');
@@ -97,7 +95,9 @@ export default function OwnerDashboard() {
   const [targetGP, setTargetGP] = useState(30);
   const [basePrice, setBasePrice] = useState('');
   const [hasMilkOption, setHasMilkOption] = useState(false);
+
   const [selectedMilkTypes, setSelectedMilkTypes] = useState({});
+
   const [editingRecipeModal, setEditingRecipeModal] = useState(null);
   const [recipeFilterCat, setRecipeFilterCat] = useState('ทั้งหมด');
   const [searchRecipeQuery, setSearchRecipeQuery] = useState('');
@@ -268,12 +268,11 @@ export default function OwnerDashboard() {
     const cleanItems = recipeItems.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
-    // ตัดฟิลด์ menu_category ออกเพื่อไม่ให้ Error schema cache ของ Supabase
     const payload = {
       menu_name: menuName.trim(), 
       cogs, 
       ingredients_detail: cleanItems,
-      base_price: Number(basePrice) || 0, 
+      base_price: Number(basePrice) || 0,
       target_gp: Number(targetGP) || 30, 
       has_milk_option: hasMilkOption
     };
@@ -291,12 +290,11 @@ export default function OwnerDashboard() {
     const cleanItems = editingRecipeModal.ingredients_detail.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
 
-    // ตัดฟิลด์ menu_category ออกเช่นกัน
     const payload = {
       menu_name: editingRecipeModal.menu_name.trim(), 
       cogs, 
       ingredients_detail: cleanItems,
-      base_price: Number(editingRecipeModal.base_price) || 0, 
+      base_price: Number(editingRecipeModal.base_price) || 0,
       target_gp: Number(editingRecipeModal.target_gp) || 30,
       has_milk_option: editingRecipeModal.has_milk_option || false
     };
@@ -312,12 +310,14 @@ export default function OwnerDashboard() {
     if (!error) fetchOwnerData();
   }
 
-  function calculateRecipeCostWithMilk(rec, milkType) {
+  // คำนวณต้นทุนตามสูตรตั้งต้นมาตรฐาน (รองรับเฉพาะเปลี่ยนชนิดนมตามที่ตั้งค่าไว้แต่แรก)
+  function calculateRecipeCost(rec, milkType) {
     let totalCost = 0;
     (rec.ingredients_detail || []).forEach(item => {
       const orig = ingredients.find(i => i.id === Number(item.ingredient_id));
       if (!orig) return;
       let active = orig;
+
       if (rec.has_milk_option && milkType && milkType !== 'fresh') {
         const nameL = (orig.name || '').toLowerCase();
         if (orig.category === 'นม/ครีมเทียม' || nameL.includes('ray') || nameL.includes('milk') || nameL.includes('นม')) {
@@ -326,6 +326,7 @@ export default function OwnerDashboard() {
           if (found) active = found;
         }
       }
+
       totalCost += getUnitCost(active) * Number(item.qty);
     });
     return totalCost;
@@ -527,6 +528,7 @@ export default function OwnerDashboard() {
         </div>
       )}
 
+      {/* Popup Modal สำหรับแก้ไขสูตร */}
       {editingRecipeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -539,10 +541,14 @@ export default function OwnerDashboard() {
                 <label className="block text-xs font-semibold text-slate-600 mb-1">ชื่อเมนู</label>
                 <input type="text" value={editingRecipeModal.menu_name || ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, menu_name: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-sm outline-none font-medium" required />
               </div>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={!!editingRecipeModal.has_milk_option} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, has_milk_option: e.target.checked })} className="w-4 h-4 accent-slate-800" />
-                <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
-              </label>
+              
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!editingRecipeModal.has_milk_option} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, has_milk_option: e.target.checked })} className="w-4 h-4 accent-slate-800" />
+                  <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
+                </label>
+              </div>
+
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-bold text-slate-700">ส่วนผสมต่อ 1 แก้ว</label>
@@ -567,6 +573,7 @@ export default function OwnerDashboard() {
                   </div>
                 ))}
               </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-xs font-semibold text-slate-600 mb-1">ราคาหน้าร้าน</label><input type="number" value={editingRecipeModal.base_price ?? ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, base_price: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                 <div><label className="block text-xs font-semibold text-slate-600 mb-1">GP (%)</label><input type="number" value={editingRecipeModal.target_gp ?? ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, target_gp: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
@@ -853,16 +860,22 @@ export default function OwnerDashboard() {
           </div>
         </div>
 
+        {/* 🥤 แท็บสูตรเครื่องดื่ม */}
         <div className={activeTab === 'recipe' ? 'block' : 'hidden'}>
           <div className="space-y-6">
             <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
               <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🥤 เพิ่มสูตรเครื่องดื่มใหม่ & คำนวณต้นทุน</h2>
               <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
                 <input type="text" placeholder="ชื่อเมนู เช่น Latte, Americano, Matcha, Hojicha" value={menuName} onChange={(e) => setMenuName(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium" />
-                <label className="flex items-center gap-2 pt-1 cursor-pointer">
-                  <input type="checkbox" checked={hasMilkOption} onChange={(e) => setHasMilkOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
-                  <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
-                </label>
+                
+                {/* ตัวเลือกเปลี่ยนชนิดนม */}
+                <div className="flex gap-6 pt-1">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={hasMilkOption} onChange={(e) => setHasMilkOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
+                    <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
+                  </label>
+                </div>
+
                 <div className="space-y-2 pt-2">
                   <div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-700">ส่วนผสมต่อ 1 แก้ว</label><button type="button" onClick={() => setRecipeItems([...recipeItems, { ingredient_id: '', qty: '' }])} className="text-xs bg-slate-700 text-white font-bold px-3 py-1.5 rounded-lg">+ เพิ่ม</button></div>
                   {recipeItems.map((item, idx) => (
@@ -909,7 +922,7 @@ export default function OwnerDashboard() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {filteredRecipes.length > 0 ? filteredRecipes.map(rec => {
                   const mType = selectedMilkTypes[rec.id] || 'fresh';
-                  const cogs = calculateRecipeCostWithMilk(rec, mType);
+                  const cogs = calculateRecipeCost(rec, mType);
                   const storePrice = Number(rec.base_price) || 0;
                   const gp = Number(rec.target_gp) || 30;
                   const storeProfit = storePrice > 0 ? storePrice - cogs : 0;
@@ -929,6 +942,8 @@ export default function OwnerDashboard() {
                           <button onClick={() => handleDeleteRecipe(rec.id)} className="bg-red-600 text-white text-xs px-2.5 py-1 rounded-lg font-bold">🗑️ ลบ</button>
                         </div>
                       </div>
+
+                      {/* ตัวเลือกนม */}
                       {rec.has_milk_option && (
                         <div className="bg-amber-50 border border-amber-200 p-2 rounded-xl flex items-center justify-between text-xs">
                           <span className="font-bold text-amber-900">🥛 นม:</span>
@@ -939,8 +954,9 @@ export default function OwnerDashboard() {
                           </div>
                         </div>
                       )}
+
                       <div className="text-xs space-y-2 text-slate-600">
-                        <div className="flex justify-between"><span>COGS [{mType.toUpperCase()}]:</span><span className="font-bold text-red-600">{cogs.toFixed(2)} ฿</span></div>
+                        <div className="flex justify-between"><span>COGS:</span><span className="font-bold text-red-600">{cogs.toFixed(2)} ฿</span></div>
                         <div className="grid grid-cols-2 gap-2">
                           <div className="bg-slate-50 p-2.5 rounded-lg border">
                             <p className="font-bold text-slate-700 text-[11px]">🏪 หน้าร้าน</p>
