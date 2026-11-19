@@ -14,6 +14,9 @@ const RECIPE_CATEGORIES = [
   '🥤 เมนูอื่นๆ (Others)'
 ];
 
+// 🔑 ตั้งรหัสผ่านของเจ้าของร้านสำหรับปลดล็อกแก้ไขย้อนหลังตรงนี้
+const OWNER_PASSWORD = '1234';
+
 function getCategoryIcon(cat) {
   switch (cat) {
     case 'เมล็ดกาแฟ/ชา': return '☕';
@@ -41,6 +44,14 @@ function getUnitCost(ing) {
   return unit > 0 ? price / unit : 0;
 }
 function todayLocal() { return new Date().toLocaleDateString('en-CA'); }
+
+// คำนวณวันที่ย้อนหลังได้ไม่เกิน 2 วันสำหรับพนักงาน
+function getMinAllowedDate() {
+  const d = new Date();
+  d.setDate(d.getDate() - 2);
+  return d.toLocaleDateString('en-CA');
+}
+
 function formatTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
@@ -69,6 +80,11 @@ export default function OwnerDashboard() {
   const [staffLogs, setStaffLogs] = useState([]);
   const [promotionsList, setPromotionsList] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // Modal ยืนยันรหัสผ่านเจ้าของร้านเพื่อแก้ไขย้อนหลัง
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [ownerPasswordInput, setOwnerPasswordInput] = useState('');
+  const [pendingAction, setPendingAction] = useState(null);
 
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
   const [staffMessages, setStaffMessages] = useState([]);
@@ -153,6 +169,85 @@ export default function OwnerDashboard() {
     setLoading(false);
   }
 
+  // ฟังก์ชันตรวจสอบสิทธิ์รหัสผ่านเจ้าของร้านก่อนทำรายการย้อนหลัง
+  function verifyOwnerPasswordAndExecute(actionCallback) {
+    if (selectedDate !== todayLocal()) {
+      setPendingAction(() => actionCallback);
+      setShowPasswordModal(true);
+    } else {
+      actionCallback();
+    }
+  }
+
+  function handlePasswordSubmit(e) {
+    e.preventDefault();
+    if (ownerPasswordInput === OWNER_PASSWORD) {
+      setShowPasswordModal(false);
+      setOwnerPasswordInput('');
+      if (pendingAction) {
+        pendingAction();
+        setPendingAction(null);
+      }
+    } else {
+      alert('❌ รหัสผ่านเจ้าของร้านไม่ถูกต้อง!');
+    }
+  }
+
+  async function handleSaveIngredient(e) {
+    e.preventDefault();
+    verifyOwnerPasswordAndExecute(async () => {
+      if (!ingName || !totalPrice || !totalUnit) return;
+      const price = Number(totalPrice) || 0;
+      const unit = Number(totalUnit) || 1;
+
+      const payload = {
+        name: ingName.trim(), total_price: price, total_unit: unit,
+        current_stock: toNumOr(currentStock, unit), min_stock_alert: toNumOr(minStockAlert, unit * 0.1),
+        unit_type: unitType, unit_price: price / unit, category: category, is_active: true
+      };
+
+      const { error } = await supabase.from('ingredients').insert([payload]);
+      if (!error) {
+        setIngName(''); setTotalPrice(''); setTotalUnit(''); setCurrentStock(''); setMinStockAlert('');
+        setUnitType('g'); setCategory(CATEGORIES[0]); fetchOwnerData(); alert('เพิ่มวัตถุดิบสำเร็จ!');
+      } else { alert('Error: ' + error.message); }
+    });
+  }
+
+  async function handleUpdateIngredientModal(e) {
+    e.preventDefault();
+    verifyOwnerPasswordAndExecute(async () => {
+      if (!editingIngredient) return;
+      const price = Number(editingIngredient.total_price) || 0;
+      const unit = Number(editingIngredient.total_unit) || 1;
+
+      const payload = {
+        name: (editingIngredient.name || '').trim(), total_price: price, total_unit: unit,
+        current_stock: toNumOr(editingIngredient.current_stock, unit), min_stock_alert: toNumOr(editingIngredient.min_stock_alert, unit * 0.1),
+        unit_type: editingIngredient.unit_type || 'g', unit_price: price / unit, category: editingIngredient.category || 'อื่นๆ'
+      };
+
+      const { error } = await supabase.from('ingredients').update(payload).eq('id', editingIngredient.id);
+      if (!error) { setEditingIngredient(null); fetchOwnerData(); alert('อัปเดตวัตถุดิบสำเร็จ!'); }
+      else { alert('Error: ' + error.message); }
+    });
+  }
+
+  async function toggleIngredientActive(ing) {
+    verifyOwnerPasswordAndExecute(async () => {
+      const { error } = await supabase.from('ingredients').update({ is_active: ing.is_active === false }).eq('id', ing.id);
+      if (!error) fetchOwnerData();
+    });
+  }
+
+  async function handleDeleteIngredient(id) {
+    verifyOwnerPasswordAndExecute(async () => {
+      if (!confirm('ต้องการลบรายการนี้ใช่ไหมครับ?')) return;
+      const { error } = await supabase.from('ingredients').delete().eq('id', id);
+      if (!error) fetchOwnerData();
+    });
+  }
+
   async function fetchPromotions() {
     const { data } = await supabase.from('promotions').select('*').order('created_at', { ascending: false });
     if (data) setPromotionsList(data);
@@ -217,52 +312,6 @@ export default function OwnerDashboard() {
     setUploadingChatFile(false);
   }
 
-  async function handleSaveIngredient(e) {
-    e.preventDefault();
-    if (!ingName || !totalPrice || !totalUnit) return;
-    const price = Number(totalPrice) || 0;
-    const unit = Number(totalUnit) || 1;
-
-    const payload = {
-      name: ingName.trim(), total_price: price, total_unit: unit,
-      current_stock: toNumOr(currentStock, unit), min_stock_alert: toNumOr(minStockAlert, unit * 0.1),
-      unit_type: unitType, unit_price: price / unit, category: category, is_active: true
-    };
-
-    const { error } = await supabase.from('ingredients').insert([payload]);
-    if (!error) {
-      setIngName(''); setTotalPrice(''); setTotalUnit(''); setCurrentStock(''); setMinStockAlert('');
-      setUnitType('g'); setCategory(CATEGORIES[0]); fetchOwnerData(); alert('เพิ่มวัตถุดิบสำเร็จ!');
-    } else { alert('Error: ' + error.message); }
-  }
-
-  async function handleUpdateIngredientModal(e) {
-    e.preventDefault();
-    if (!editingIngredient) return;
-    const price = Number(editingIngredient.total_price) || 0;
-    const unit = Number(editingIngredient.total_unit) || 1;
-
-    const payload = {
-      name: (editingIngredient.name || '').trim(), total_price: price, total_unit: unit,
-      current_stock: toNumOr(editingIngredient.current_stock, unit), min_stock_alert: toNumOr(editingIngredient.min_stock_alert, unit * 0.1),
-      unit_type: editingIngredient.unit_type || 'g', unit_price: price / unit, category: editingIngredient.category || 'อื่นๆ'
-    };
-
-    const { error } = await supabase.from('ingredients').update(payload).eq('id', editingIngredient.id);
-    if (!error) { setEditingIngredient(null); fetchOwnerData(); alert('อัปเดตวัตถุดิบสำเร็จ!'); }
-    else { alert('Error: ' + error.message); }
-  }
-
-  async function toggleIngredientActive(ing) {
-    const { error } = await supabase.from('ingredients').update({ is_active: ing.is_active === false }).eq('id', ing.id);
-    if (!error) fetchOwnerData();
-  }
-  async function handleDeleteIngredient(id) {
-    if (!confirm('ต้องการลบรายการนี้ใช่ไหมครับ?')) return;
-    const { error } = await supabase.from('ingredients').delete().eq('id', id);
-    if (!error) fetchOwnerData();
-  }
-
   async function handleSaveRecipeToDB() {
     if (!menuName.trim()) { alert('กรุณาใส่ชื่อเมนูก่อนครับ'); return; }
     const cleanItems = recipeItems.filter(item => item.ingredient_id !== '');
@@ -310,7 +359,6 @@ export default function OwnerDashboard() {
     if (!error) fetchOwnerData();
   }
 
-  // คำนวณต้นทุนตามสูตรตั้งต้นมาตรฐาน (รองรับเฉพาะเปลี่ยนชนิดนมตามที่ตั้งค่าไว้แต่แรก)
   function calculateRecipeCost(rec, milkType) {
     let totalCost = 0;
     (rec.ingredients_detail || []).forEach(item => {
@@ -420,6 +468,34 @@ export default function OwnerDashboard() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-200 via-zinc-300 to-slate-400 text-slate-800 p-4 md:p-8">
+
+      {/* Modal กรอกรหัสผ่านเจ้าของร้านเพื่อแก้ไขย้อนหลัง */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-sm w-full p-6 space-y-4">
+            <div className="text-center space-y-1">
+              <span className="text-3xl">🔒</span>
+              <h3 className="font-bold text-slate-800 text-base">ยืนยันรหัสผ่านเจ้าของร้าน</h3>
+              <p className="text-xs text-slate-500">คุณกำลังแก้ไขข้อมูลของวันที่ย้อนหลัง ({selectedDate}) กรุณาใส่รหัสผ่านเพื่อดำเนินการต่อ</p>
+            </div>
+            <form onSubmit={handlePasswordSubmit} className="space-y-3">
+              <input 
+                type="password" 
+                placeholder="รหัสผ่านเจ้าของร้าน" 
+                value={ownerPasswordInput} 
+                onChange={(e) => setOwnerPasswordInput(e.target.value)} 
+                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium text-center tracking-widest" 
+                autoFocus
+                required 
+              />
+              <div className="flex gap-2 pt-1">
+                <button type="button" onClick={() => { setShowPasswordModal(false); setOwnerPasswordInput(''); }} className="flex-1 bg-slate-200 font-bold py-2.5 rounded-xl text-xs">ยกเลิก</button>
+                <button type="submit" className="flex-1 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs shadow">ปลดล็อก</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {selectedSaleDetail && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -591,14 +667,22 @@ export default function OwnerDashboard() {
 
         <div className="bg-gradient-to-r from-slate-100 via-zinc-100 to-slate-200 shadow-xl rounded-2xl p-6 border border-slate-400 flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
-            <h1 className="text-2xl font-black text-slate-800">⚙️ ระบบจัดการเจ้าของร้าน</h1>
+            <h1 className="text-2xl font-black text-slate-800">⚙️ ระบบจัดการร้านค้า</h1>
             <p className="text-sm text-slate-600 font-medium">ควบคุมยอดขาย สต็อก สูตรเครื่องดื่ม และพูดคุยภายใน</p>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-white/90 px-3 py-2 rounded-xl border border-slate-300 shadow-sm">
               <label className="text-xs font-bold text-slate-700">📅 เลือกดูวันที่:</label>
-              <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="bg-transparent text-sm font-semibold outline-none cursor-pointer" />
+              {/* อนุญาตให้เลือกย้อนหลังได้ไม่เกิน 2 วัน */}
+              <input 
+                type="date" 
+                value={selectedDate} 
+                min={getMinAllowedDate()} 
+                max={todayLocal()} 
+                onChange={(e) => setSelectedDate(e.target.value)} 
+                className="bg-transparent text-sm font-semibold outline-none cursor-pointer" 
+              />
             </div>
 
             <button onClick={() => setActiveTab('messages')} className="relative bg-white w-11 h-11 rounded-2xl border border-slate-300 shadow-sm hover:bg-slate-50 flex items-center justify-center transition" title="ข้อความด่วนจากพนักงาน">
@@ -775,7 +859,7 @@ export default function OwnerDashboard() {
             )}
 
             <form onSubmit={handleSaveIngredient} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่</h3>
+              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่ {selectedDate !== todayLocal() && <span className="text-amber-600 text-xs">(⚠️ กำลังเพิ่มย้อนหลัง: {selectedDate})</span>}</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <input type="text" placeholder="ชื่อวัตถุดิบ" value={ingName} onChange={(e) => setIngName(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
                 <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
