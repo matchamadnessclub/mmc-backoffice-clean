@@ -78,11 +78,14 @@ export default function OwnerDashboard() {
   const [ownerPasswordInput, setOwnerPasswordInput] = useState('');
   const [pendingAction, setPendingAction] = useState(null);
 
-  // Modal แก้ไขยอดขาย
+  // Modal แก้ไขยอดขายประจำวัน
   const [editingSalesModal, setEditingSalesModal] = useState(false);
   const [salesForm, setSalesForm] = useState({
     cash: '', qr: '', grab: '', lineman: '', grabth: '', linemanth: '', actual_cash: '', total_cups: '', staff_name: 'เจ้าของร้าน'
   });
+
+  // Modal แก้ไขสต็อกวัตถุดิบ
+  const [editingIngredient, setEditingIngredient] = useState(null);
 
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
   const [staffMessages, setStaffMessages] = useState([]);
@@ -102,7 +105,6 @@ export default function OwnerDashboard() {
   const [minStockAlert, setMinStockAlert] = useState('');
   const [unitType, setUnitType] = useState('g');
   const [category, setCategory] = useState(CATEGORIES[0]);
-  const [editingIngredient, setEditingIngredient] = useState(null);
 
   const [menuName, setMenuName] = useState('');
   const [recipeItems, setRecipeItems] = useState([{ ingredient_id: '', qty: '' }]);
@@ -189,6 +191,7 @@ export default function OwnerDashboard() {
     }
   }
 
+  // 1. เปิด Modal แก้ไขยอดขายย้อนหลัง (เช็ครหัสผ่านเจ้าของร้าน)
   function openEditSalesModal() {
     verifyOwnerPasswordAndExecute(() => {
       setSalesForm({
@@ -234,51 +237,60 @@ export default function OwnerDashboard() {
     }
   }
 
+  // 2. จัดการเพิ่ม/แก้ไขสต็อก (เช็ครหัสผ่านเฉพาะตอนทำรายการย้อนหลัง)
   async function handleSaveIngredient(e) {
     e.preventDefault();
-    if (!ingName || !totalPrice || !totalUnit) return;
-    const price = Number(totalPrice) || 0;
-    const unit = Number(totalUnit) || 1;
+    verifyOwnerPasswordAndExecute(async () => {
+      if (!ingName || !totalPrice || !totalUnit) return;
+      const price = Number(totalPrice) || 0;
+      const unit = Number(totalUnit) || 1;
 
-    const payload = {
-      name: ingName.trim(), total_price: price, total_unit: unit,
-      current_stock: toNumOr(currentStock, unit), min_stock_alert: toNumOr(minStockAlert, unit * 0.1),
-      unit_type: unitType, unit_price: price / unit, category: category, is_active: true
-    };
+      const payload = {
+        name: ingName.trim(), total_price: price, total_unit: unit,
+        current_stock: toNumOr(currentStock, unit), min_stock_alert: toNumOr(minStockAlert, unit * 0.1),
+        unit_type: unitType, unit_price: price / unit, category: category, is_active: true
+      };
 
-    const { error } = await supabase.from('ingredients').insert([payload]);
-    if (!error) {
-      setIngName(''); setTotalPrice(''); setTotalUnit(''); setCurrentStock(''); setMinStockAlert('');
-      setUnitType('g'); setCategory(CATEGORIES[0]); fetchOwnerData(); alert('เพิ่มวัตถุดิบสำเร็จ!');
-    } else { alert('Error: ' + error.message); }
+      const { error } = await supabase.from('ingredients').insert([payload]);
+      if (!error) {
+        setIngName(''); setTotalPrice(''); setTotalUnit(''); setCurrentStock(''); setMinStockAlert('');
+        setUnitType('g'); setCategory(CATEGORIES[0]); fetchOwnerData(); alert('เพิ่มวัตถุดิบสำเร็จ!');
+      } else { alert('Error: ' + error.message); }
+    });
   }
 
   async function handleUpdateIngredientModal(e) {
     e.preventDefault();
-    if (!editingIngredient) return;
-    const price = Number(editingIngredient.total_price) || 0;
-    const unit = Number(editingIngredient.total_unit) || 1;
+    verifyOwnerPasswordAndExecute(async () => {
+      if (!editingIngredient) return;
+      const price = Number(editingIngredient.total_price) || 0;
+      const unit = Number(editingIngredient.total_unit) || 1;
 
-    const payload = {
-      name: (editingIngredient.name || '').trim(), total_price: price, total_unit: unit,
-      current_stock: toNumOr(editingIngredient.current_stock, unit), min_stock_alert: toNumOr(editingIngredient.min_stock_alert, unit * 0.1),
-      unit_type: editingIngredient.unit_type || 'g', unit_price: price / unit, category: editingIngredient.category || 'อื่นๆ'
-    };
+      const payload = {
+        name: (editingIngredient.name || '').trim(), total_price: price, total_unit: unit,
+        current_stock: toNumOr(editingIngredient.current_stock, unit), min_stock_alert: toNumOr(editingIngredient.min_stock_alert, unit * 0.1),
+        unit_type: editingIngredient.unit_type || 'g', unit_price: price / unit, category: editingIngredient.category || 'อื่นๆ'
+      };
 
-    const { error } = await supabase.from('ingredients').update(payload).eq('id', editingIngredient.id);
-    if (!error) { setEditingIngredient(null); fetchOwnerData(); alert('อัปเดตวัตถุดิบสำเร็จ!'); }
-    else { alert('Error: ' + error.message); }
+      const { error } = await supabase.from('ingredients').update(payload).eq('id', editingIngredient.id);
+      if (!error) { setEditingIngredient(null); fetchOwnerData(); alert('อัปเดตสต็อกสำเร็จ!'); }
+      else { alert('Error: ' + error.message); }
+    });
   }
 
   async function toggleIngredientActive(ing) {
-    const { error } = await supabase.from('ingredients').update({ is_active: ing.is_active === false }).eq('id', ing.id);
-    if (!error) fetchOwnerData();
+    verifyOwnerPasswordAndExecute(async () => {
+      const { error } = await supabase.from('ingredients').update({ is_active: ing.is_active === false }).eq('id', ing.id);
+      if (!error) fetchOwnerData();
+    });
   }
 
   async function handleDeleteIngredient(id) {
-    if (!confirm('ต้องการลบรายการนี้ใช่ไหมครับ?')) return;
-    const { error } = await supabase.from('ingredients').delete().eq('id', id);
-    if (!error) fetchOwnerData();
+    verifyOwnerPasswordAndExecute(async () => {
+      if (!confirm('ต้องการลบรายการนี้ใช่ไหมครับ?')) return;
+      const { error } = await supabase.from('ingredients').delete().eq('id', id);
+      if (!error) fetchOwnerData();
+    });
   }
 
   async function fetchPromotions() {
@@ -502,6 +514,7 @@ export default function OwnerDashboard() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-200 via-zinc-300 to-slate-400 text-slate-800 p-4 md:p-8">
 
+      {/* Modal ยืนยันรหัสผ่านเจ้าของร้าน */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-sm w-full p-6 space-y-4">
@@ -529,6 +542,7 @@ export default function OwnerDashboard() {
         </div>
       )}
 
+      {/* Modal แก้ไขยอดขายประจำวัน */}
       {editingSalesModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
@@ -561,6 +575,45 @@ export default function OwnerDashboard() {
               <div className="flex gap-2 pt-3 border-t border-slate-200">
                 <button type="button" onClick={() => setEditingSalesModal(false)} className="w-1/3 bg-slate-200 font-bold py-2.5 rounded-xl text-sm">ยกเลิก</button>
                 <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกยอดขาย</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal แก้ไขสต็อกวัตถุดิบ */}
+      {editingIngredient && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+              <h3 className="font-bold text-slate-800 text-base">✏️ แก้ไขสต็อกวัตถุดิบ ({selectedDate})</h3>
+              <button onClick={() => setEditingIngredient(null)} className="bg-slate-100 font-bold px-3 py-1 rounded-full text-xs">✕</button>
+            </div>
+            <form onSubmit={handleUpdateIngredientModal} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ชื่อ</label><input type="text" value={editingIngredient.name || ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, name: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">หมวด</label>
+                  <select value={editingIngredient.category || 'อื่นๆ'} onChange={(e) => setEditingIngredient({ ...editingIngredient, category: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ราคารวม (฿)</label><input type="number" step="0.01" value={editingIngredient.total_price ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, total_price: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ปริมาณรวม</label><input type="number" step="0.01" value={editingIngredient.total_unit ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, total_unit: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required /></div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">คงเหลือ</label><input type="number" step="0.01" value={editingIngredient.current_stock ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, current_stock: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">แจ้งเตือนขั้นต่ำ</label><input type="number" step="0.01" value={editingIngredient.min_stock_alert ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, min_stock_alert: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                <div><label className="block text-xs font-semibold text-slate-600 mb-1">หน่วย</label>
+                  <select value={editingIngredient.unit_type || 'g'} onChange={(e) => setEditingIngredient({ ...editingIngredient, unit_type: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
+                    <option value="g">g</option><option value="ml">ml</option><option value="pcs">pcs</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setEditingIngredient(null)} className="w-1/3 bg-slate-200 font-bold py-2.5 rounded-xl text-sm">ยกเลิก</button>
+                <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกสต็อก</button>
               </div>
             </form>
           </div>
@@ -706,7 +759,7 @@ export default function OwnerDashboard() {
 
         <div className="flex bg-slate-300/80 p-1.5 rounded-2xl shadow-inner border border-slate-400 gap-1 overflow-x-auto text-xs md:text-sm">
           <button onClick={() => setActiveTab('sales')} className={tabClass('sales', activeTab)}>📊 ยอดขาย</button>
-          <button onClick={() => setActiveTab('ingredients')} className={tabClass('ingredients', activeTab)}>📦 จัดการวัตถุดิบ {lowStockItems.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{lowStockItems.length}</span>}</button>
+          <button onClick={() => setActiveTab('ingredients')} className={tabClass('ingredients', activeTab)}>📦 สต็อก & วัตถุดิบ {lowStockItems.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{lowStockItems.length}</span>}</button>
           <button onClick={() => setActiveTab('recipe')} className={tabClass('recipe', activeTab)}>🥤 สูตร & GP</button>
           <button onClick={() => setActiveTab('messages')} className={tabClass('messages', activeTab)}>💬 ข้อความ {unreadMessages.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{unreadMessages.length}</span>}</button>
           <button onClick={() => setActiveTab('internal_chat')} className={tabClass('internal_chat', activeTab)}>💬 Internal Message</button>
@@ -856,7 +909,7 @@ export default function OwnerDashboard() {
 
         <div className={activeTab === 'ingredients' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก</h2>
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก ({selectedDate})</h2>
 
             {lowStockItems.length > 0 && (
               <div className="bg-red-50 border-2 border-red-300 p-4 rounded-2xl shadow-sm space-y-3">
@@ -879,7 +932,7 @@ export default function OwnerDashboard() {
             )}
 
             <form onSubmit={handleSaveIngredient} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่</h3>
+              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่ {selectedDate !== todayLocal() && <span className="text-amber-600 text-xs">(⚠️ กำลังเพิ่มย้อนหลัง ต้องใช้รหัสยืนยัน)</span>}</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <input type="text" placeholder="ชื่อวัตถุดิบ" value={ingName} onChange={(e) => setIngName(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
                 <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
@@ -1133,7 +1186,7 @@ export default function OwnerDashboard() {
                       )}
                       {m.file_url && m.file_type !== 'image' && (
                         <a href={m.file_url} target="_blank" rel="noopener noreferrer" className={`block text-xs font-bold underline p-2 rounded-lg border ${isMine ? 'bg-slate-700 text-blue-200 border-slate-600' : 'bg-white text-blue-600 border-slate-200'}`}>
-                      	📎 เปิดดูไฟล์แนบ
+                          📎 เปิดดูไฟล์แนบ
                         </a>
                       )}
                       <p className={`text-[9px] text-right ${isMine ? 'text-slate-300' : 'text-slate-400'}`}>{formatTime(m.created_at)}</p>
