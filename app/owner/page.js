@@ -14,7 +14,6 @@ const RECIPE_CATEGORIES = [
   '🥤 เมนูอื่นๆ (Others)'
 ];
 
-// 🔑 รหัสผ่านเจ้าของร้านสำหรับปลดล็อกแก้ไขย้อนหลัง
 const OWNER_PASSWORD = '1234';
 
 function getCategoryIcon(cat) {
@@ -67,6 +66,7 @@ export default function OwnerDashboard() {
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [salesData, setSalesData] = useState(null);
   const [expensesData, setExpensesData] = useState([]);
+  const [dailyStaffStock, setDailyStaffStock] = useState({});
   const [allSalesHistory, setAllSalesHistory] = useState([]);
   const [ingredients, setIngredients] = useState([]);
   const [recipesList, setRecipesList] = useState([]);
@@ -74,16 +74,15 @@ export default function OwnerDashboard() {
   const [promotionsList, setPromotionsList] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Modal ยืนยันรหัสผ่านเจ้าของร้าน
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [ownerPasswordInput, setOwnerPasswordInput] = useState('');
   const [pendingAction, setPendingAction] = useState(null);
 
-  // Modal แก้ไขยอดขายประจำวัน
   const [editingSalesModal, setEditingSalesModal] = useState(false);
   const [salesForm, setSalesForm] = useState({
     cash: '', qr: '', grab: '', lineman: '', grabth: '', linemanth: '', actual_cash: '', total_cups: '', staff_name: 'เจ้าของร้าน'
   });
+  const [modalStockCounts, setModalStockCounts] = useState({});
 
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
   const [staffMessages, setStaffMessages] = useState([]);
@@ -112,7 +111,6 @@ export default function OwnerDashboard() {
   const [hasMilkOption, setHasMilkOption] = useState(false);
 
   const [selectedMilkTypes, setSelectedMilkTypes] = useState({});
-
   const [editingRecipeModal, setEditingRecipeModal] = useState(null);
   const [recipeFilterCat, setRecipeFilterCat] = useState('ทั้งหมด');
   const [searchRecipeQuery, setSearchRecipeQuery] = useState('');
@@ -153,6 +151,13 @@ export default function OwnerDashboard() {
       const { data: sales } = await supabase.from('daily_sales').select('*').eq('date', selectedDate).maybeSingle();
       setSalesData(sales || null);
 
+      const { data: stockRep } = await supabase.from('daily_staff_stocks').select('*').eq('date', selectedDate).maybeSingle();
+      if (stockRep && stockRep.stock_data) {
+        setDailyStaffStock(stockRep.stock_data);
+      } else {
+        setDailyStaffStock({});
+      }
+
       const { data: exp } = await supabase.from('expenses').select('*').eq('date', selectedDate);
       setExpensesData(exp || []);
 
@@ -168,7 +173,6 @@ export default function OwnerDashboard() {
     setLoading(false);
   }
 
-  // ฟังก์ชันเช็ครหัสผ่านเจ้าของร้านเมื่อทำรายการย้อนหลัง
   function verifyOwnerPasswordAndExecute(actionCallback) {
     if (selectedDate !== todayLocal()) {
       setPendingAction(() => actionCallback);
@@ -192,8 +196,8 @@ export default function OwnerDashboard() {
     }
   }
 
-  function openEditSalesModal() {
-    verifyOwnerPasswordAndExecute(() => {
+  async function openEditSalesModal() {
+    verifyOwnerPasswordAndExecute(async () => {
       setSalesForm({
         cash: salesData?.cash ?? '',
         qr: salesData?.qr ?? '',
@@ -205,13 +209,22 @@ export default function OwnerDashboard() {
         total_cups: salesData?.total_cups ?? '',
         staff_name: salesData?.staff_name || ownerName || 'เจ้าของร้าน'
       });
+
+      const { data: stockRep } = await supabase.from('daily_staff_stocks').select('*').eq('date', selectedDate).maybeSingle();
+      const currentDayStock = stockRep && stockRep.stock_data ? stockRep.stock_data : {};
+
+      const initialCounts = {};
+      ingredients.forEach(i => {
+        initialCounts[i.id] = currentDayStock[i.id] !== undefined ? currentDayStock[i.id] : getStock(i);
+      });
+      setModalStockCounts(initialCounts);
       setEditingSalesModal(true);
     });
   }
 
-  async function handleSaveSalesUpdate(e) {
+  async function handleSaveSalesAndStockUpdate(e) {
     e.preventDefault();
-    const payload = {
+    const salesPayload = {
       date: selectedDate,
       cash: Number(salesForm.cash) || 0,
       qr: Number(salesForm.qr) || 0,
@@ -224,14 +237,25 @@ export default function OwnerDashboard() {
       staff_name: salesForm.staff_name || 'เจ้าของร้าน'
     };
 
-    const { error } = await supabase.from('daily_sales').upsert([payload], { onConflict: 'date' });
-    if (!error) {
-      alert(`บันทึกยอดขายวันที่ ${selectedDate} สำเร็จ!`);
+    const stockPayload = {
+      date: selectedDate,
+      stock_data: modalStockCounts,
+      updated_at: new Date().toISOString()
+    };
+
+    try {
+      const { error: salesErr } = await supabase.from('daily_sales').upsert([salesPayload], { onConflict: 'date' });
+      if (salesErr) throw salesErr;
+
+      const { error: stockErr } = await supabase.from('daily_staff_stocks').upsert([stockPayload], { onConflict: 'date' });
+      if (stockErr) throw stockErr;
+
+      alert(`บันทึกยอดขายและสต็อกรายวันของวันที่ ${selectedDate} สำเร็จ!`);
       setEditingSalesModal(false);
       fetchOwnerData();
       fetchAllSalesHistory();
-    } else {
-      alert('บันทึกไม่สำเร็จ: ' + error.message);
+    } catch (err) {
+      alert('บันทึกไม่สำเร็จ: ' + err.message);
     }
   }
 
@@ -310,11 +334,6 @@ export default function OwnerDashboard() {
       fetchStaffMessages();
     }
     setSelectedStaffMsg({ ...msg, is_read: true });
-  }
-  async function handleDeleteStaffMessage(id) {
-    if (!confirm('ต้องการลบข้อความนี้ใช่ไหม?')) return;
-    const { error } = await supabase.from('staff_messages').delete().eq('id', id);
-    if (!error) { setSelectedStaffMsg(null); fetchStaffMessages(); }
   }
 
   async function handleSendChat(fileUrl = null, fileType = null) {
@@ -509,7 +528,6 @@ export default function OwnerDashboard() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-200 via-zinc-300 to-slate-400 text-slate-800 p-4 md:p-8">
 
-      {/* Modal ยืนยันรหัสผ่านเจ้าของร้าน */}
       {showPasswordModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-sm w-full p-6 space-y-4">
@@ -519,15 +537,7 @@ export default function OwnerDashboard() {
               <p className="text-xs text-slate-500">คุณกำลังทำรายการแก้ไขข้อมูลย้อนหลังวันที่ (<span className="font-bold text-slate-700">{selectedDate}</span>) กรุณาใส่รหัสผ่าน</p>
             </div>
             <form onSubmit={handlePasswordSubmit} className="space-y-3">
-              <input 
-                type="password" 
-                placeholder="รหัสผ่านเจ้าของร้าน" 
-                value={ownerPasswordInput} 
-                onChange={(e) => setOwnerPasswordInput(e.target.value)} 
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium text-center tracking-widest" 
-                autoFocus
-                required 
-              />
+              <input type="password" placeholder="รหัสผ่านเจ้าของร้าน" value={ownerPasswordInput} onChange={(e) => setOwnerPasswordInput(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium text-center tracking-widest" autoFocus required />
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => { setShowPasswordModal(false); setOwnerPasswordInput(''); }} className="flex-1 bg-slate-200 font-bold py-2.5 rounded-xl text-xs">ยกเลิก</button>
                 <button type="submit" className="flex-1 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs shadow">ยืนยัน</button>
@@ -537,41 +547,61 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* Modal แก้ไขยอดขายประจำวัน */}
+      {/* Modal แก้ไขยอดขาย & สต็อกรายวัน */}
       {editingSalesModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-              <h3 className="font-bold text-slate-800 text-base">✏️ แก้ไข/บันทึกยอดขายประจำวัน ({selectedDate})</h3>
+              <h3 className="font-bold text-slate-800 text-base">✏️ แก้ไขยอดขาย & สต็อกรายวัน ({selectedDate})</h3>
               <button onClick={() => setEditingSalesModal(false)} className="bg-slate-100 font-bold px-3 py-1 rounded-full text-xs">✕</button>
             </div>
-            <form onSubmit={handleSaveSalesUpdate} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอดเงินสด (฿)</label><input type="number" step="0.01" value={salesForm.cash} onChange={(e) => setSalesForm({...salesForm, cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด QR Code (฿)</label><input type="number" step="0.01" value={salesForm.qr} onChange={(e) => setSalesForm({...salesForm, qr: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด Grab (฿)</label><input type="number" step="0.01" value={salesForm.grab} onChange={(e) => setSalesForm({...salesForm, grab: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด LineMan (฿)</label><input type="number" step="0.01" value={salesForm.lineman} onChange={(e) => setSalesForm({...salesForm, lineman: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด GrabTH (฿)</label><input type="number" step="0.01" value={salesForm.grabth} onChange={(e) => setSalesForm({...salesForm, grabth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ยอด LineManTH (฿)</label><input type="number" step="0.01" value={salesForm.linemanth} onChange={(e) => setSalesForm({...salesForm, linemanth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+            
+            <form onSubmit={handleSaveSalesAndStockUpdate} className="space-y-5">
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 ยอดขายประจำวัน</h4>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอดเงินสด (฿)</label><input type="number" step="0.01" value={salesForm.cash} onChange={(e) => setSalesForm({...salesForm, cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด QR Code (฿)</label><input type="number" step="0.01" value={salesForm.qr} onChange={(e) => setSalesForm({...salesForm, qr: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด Grab (฿)</label><input type="number" step="0.01" value={salesForm.grab} onChange={(e) => setSalesForm({...salesForm, grab: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด LineMan (฿)</label><input type="number" step="0.01" value={salesForm.lineman} onChange={(e) => setSalesForm({...salesForm, lineman: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด GrabTH (฿)</label><input type="number" step="0.01" value={salesForm.grabth} onChange={(e) => setSalesForm({...salesForm, grabth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด LineManTH (฿)</label><input type="number" step="0.01" value={salesForm.linemanth} onChange={(e) => setSalesForm({...salesForm, linemanth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 pt-2">
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">เงินสดจริงในลิ้นชัก (฿)</label><input type="number" step="0.01" value={salesForm.actual_cash} onChange={(e) => setSalesForm({...salesForm, actual_cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">จำนวนแก้วรวม</label><input type="number" value={salesForm.total_cups} onChange={(e) => setSalesForm({...salesForm, total_cups: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ผู้บันทึก</label><input type="text" value={salesForm.staff_name} onChange={(e) => setSalesForm({...salesForm, staff_name: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">เงินสดจริงในลิ้นชัก (฿)</label><input type="number" step="0.01" value={salesForm.actual_cash} onChange={(e) => setSalesForm({...salesForm, actual_cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">จำนวนแก้วรวม</label><input type="number" value={salesForm.total_cups} onChange={(e) => setSalesForm({...salesForm, total_cups: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+
+              <div className="space-y-3 pt-4 border-t border-slate-200">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📦 สต็อกรายวัน (ที่พนักงานต้องกรอก)</h4>
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                  {ingredients.filter(i => i.is_active !== false).map(ing => (
+                    <div key={ing.id} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border text-xs gap-3">
+                      <span className="font-bold text-slate-800 flex-1">{ing.name} <span className="text-slate-400">({ing.unit_type})</span></span>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={modalStockCounts[ing.id] !== undefined ? modalStockCounts[ing.id] : getStock(ing)} 
+                        onChange={(e) => setModalStockCounts({...modalStockCounts, [ing.id]: e.target.value})} 
+                        className="w-32 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none font-bold text-right"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">ผู้บันทึก</label>
-                <input type="text" value={salesForm.staff_name} onChange={(e) => setSalesForm({...salesForm, staff_name: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" />
-              </div>
-              <div className="flex gap-2 pt-2">
+
+              <div className="flex gap-2 pt-3 border-t border-slate-200">
                 <button type="button" onClick={() => setEditingSalesModal(false)} className="w-1/3 bg-slate-200 font-bold py-2.5 rounded-xl text-sm">ยกเลิก</button>
-                <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกยอดขาย</button>
+                <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกทั้งหมด</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Modal แก้ไขสต็อก/วัตถุดิบ */}
+      {/* Modal แก้ไขวัตถุดิบ */}
       {editingIngredient && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -748,8 +778,8 @@ export default function OwnerDashboard() {
         </div>
 
         <div className="flex bg-slate-300/80 p-1.5 rounded-2xl shadow-inner border border-slate-400 gap-1 overflow-x-auto text-xs md:text-sm">
-          <button onClick={() => setActiveTab('sales')} className={tabClass('sales', activeTab)}>📊 ยอดขาย</button>
-          <button onClick={() => setActiveTab('ingredients')} className={tabClass('ingredients', activeTab)}>📦 สต็อก {lowStockItems.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{lowStockItems.length}</span>}</button>
+          <button onClick={() => setActiveTab('sales')} className={tabClass('sales', activeTab)}>📊 ยอดขาย & สต็อกรายวัน</button>
+          <button onClick={() => setActiveTab('ingredients')} className={tabClass('ingredients', activeTab)}>📦 จัดการวัตถุดิบ {lowStockItems.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{lowStockItems.length}</span>}</button>
           <button onClick={() => setActiveTab('recipe')} className={tabClass('recipe', activeTab)}>🥤 สูตร & GP</button>
           <button onClick={() => setActiveTab('messages')} className={tabClass('messages', activeTab)}>💬 ข้อความ {unreadMessages.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{unreadMessages.length}</span>}</button>
           <button onClick={() => setActiveTab('internal_chat')} className={tabClass('internal_chat', activeTab)}>💬 Internal Message</button>
@@ -761,11 +791,11 @@ export default function OwnerDashboard() {
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center gap-2 flex-wrap">
               <div>
-                <h2 className="font-bold text-lg text-slate-800">สรุปยอดขายประจำวัน ({selectedDate})</h2>
+                <h2 className="font-bold text-lg text-slate-800">สรุปยอดขาย & สต็อกรายวัน ประจำวันที่ ({selectedDate})</h2>
                 <p className="text-xs text-slate-500">พนักงานผู้บันทึก: <span className="font-bold">{salesData?.staff_name || 'ยังไม่บันทึก'}</span></p>
               </div>
               <button onClick={openEditSalesModal} className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs shadow transition">
-                ✏️ แก้ไข/บันทึกยอดขายของวันนี้
+                ✏️ แก้ไขยอดขาย & สต็อกย้อนหลัง
               </button>
             </div>
 
@@ -787,6 +817,22 @@ export default function OwnerDashboard() {
                     <div className="bg-slate-50 p-3 rounded-xl border">GrabTH: <span className="font-bold text-slate-800">{(Number(salesData.grabth) || 0).toLocaleString()} ฿</span></div>
                     <div className="bg-slate-50 p-3 rounded-xl border">LineManTH: <span className="font-bold text-slate-800">{(Number(salesData.linemanth) || 0).toLocaleString()} ฿</span></div>
                   </div>
+                </div>
+
+                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📦 สต็อกรายวันที่พนักงานต้องกรอก ({selectedDate})</h3>
+                  {Object.keys(dailyStaffStock).length > 0 ? (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {ingredients.filter(i => i.is_active !== false).map(ing => (
+                        <div key={ing.id} className="bg-slate-50 p-2.5 rounded-xl border text-xs flex justify-between items-center">
+                          <span className="font-bold text-slate-700 truncate mr-2">{ing.name}:</span>
+                          <span className="font-black text-slate-900 shrink-0">{dailyStaffStock[ing.id] !== undefined ? dailyStaffStock[ing.id] : '-'} {ing.unit_type}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl text-center">ยังไม่มีการบันทึกสต็อกรายวันในวันที่เลือก (สามารถกดปุ่มแก้ไขด้านบนเพื่อเติมย้อนหลังได้)</p>
+                  )}
                 </div>
 
                 <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
@@ -825,7 +871,7 @@ export default function OwnerDashboard() {
               <div className="text-center py-10 text-slate-500 font-medium bg-white rounded-xl border border-slate-300 p-6 space-y-3">
                 <p>ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก ({selectedDate})</p>
                 <button onClick={openEditSalesModal} className="bg-slate-800 text-white font-bold px-5 py-2 rounded-xl text-xs shadow">
-                  + เพิ่มยอดขายของวันนี้
+                  + เพิ่มยอดขาย & สต็อกของวันนี้
                 </button>
               </div>
             )}
@@ -899,14 +945,7 @@ export default function OwnerDashboard() {
 
         <div className={activeTab === 'ingredients' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <div className="flex justify-between items-center border-b border-slate-300 pb-3 flex-wrap gap-2">
-              <h2 className="font-bold text-lg text-slate-800">จัดการราคาต้นทุนวัตถุดิบและสต็อก ({selectedDate})</h2>
-              {selectedDate !== todayLocal() && (
-                <span className="text-xs bg-amber-100 text-amber-800 font-bold px-3 py-1 rounded-lg border border-amber-300">
-                  ⚠️ กำลังจัดการข้อมูลย้อนหลัง (ต้องใส่รหัสผ่าน)
-                </span>
-              )}
-            </div>
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก</h2>
 
             {lowStockItems.length > 0 && (
               <div className="bg-red-50 border-2 border-red-300 p-4 rounded-2xl shadow-sm space-y-3">
@@ -940,33 +979,8 @@ export default function OwnerDashboard() {
                   <input type="number" step="0.01" placeholder="ปริมาณซื้อรวม" value={totalUnit} onChange={(e) => setTotalUnit(e.target.value)} className="w-1/2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-slate-200">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">สต็อกคงเหลือ</label><input type="number" step="0.01" placeholder="เช่น 500" value={currentStock} onChange={(e) => setCurrentStock(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">แจ้งเตือนขั้นต่ำ</label><input type="number" step="0.01" placeholder="เช่น 100" value={minStockAlert} onChange={(e) => setMinStockAlert(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">หน่วย</label>
-                  <select value={unitType} onChange={(e) => setUnitType(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
-                    <option value="g">กรัม (g)</option><option value="ml">มิลลิลิตร (ml)</option><option value="pcs">ชิ้น (pcs)</option>
-                  </select>
-                </div>
-              </div>
-              <button type="submit" className="w-full bg-gradient-to-r from-slate-700 to-zinc-800 text-white font-bold py-2.5 rounded-xl text-sm shadow transition">บันทึกเพิ่มวัตถุดิบ</button>
+              <button type="submit" className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">บันทึกเพิ่มวัตถุดิบ</button>
             </form>
-
-            <div className="bg-white p-3 rounded-xl border border-slate-300 shadow-sm flex flex-col md:flex-row gap-2">
-              <input type="text" placeholder="🔍 ค้นหาชื่อวัตถุดิบ..." value={searchStockQuery} onChange={(e) => setSearchStockQuery(e.target.value)} className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" />
-              <select value={stockSortType} onChange={(e) => setStockSortType(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-bold text-slate-700 cursor-pointer">
-                <option value="az">🔤 เรียง A ➔ Z</option>
-                <option value="za">🔤 เรียง Z ➔ A</option>
-                <option value="active_first">🟢 เปิดนับสต็อกขึ้นก่อน</option>
-                <option value="inactive_first">🔴 ปิดนับสต็อกขึ้นก่อน</option>
-              </select>
-              <select value={stockStatusFilter} onChange={(e) => setStockStatusFilter(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-bold text-slate-700 cursor-pointer">
-                <option value="all">📋 ทั้งหมด</option>
-                <option value="active">🟢 เปิดนับ</option>
-                <option value="inactive">🔴 ปิดนับ</option>
-                <option value="low">🚨 ใกล้หมด</option>
-              </select>
-            </div>
 
             <div className="space-y-6">
               {CATEGORIES.map(cat => {
@@ -1000,7 +1014,7 @@ export default function OwnerDashboard() {
                             </div>
                             <div className="flex gap-2 shrink-0">
                               <button onClick={() => toggleIngredientActive(ing)} className={`text-xs font-bold px-3 py-1.5 rounded-lg border shadow-sm ${isActive ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-emerald-50 text-emerald-700 border-emerald-300'}`}>{isActive ? 'ปิดการนับ' : 'เปิดการนับ'}</button>
-                              <button onClick={() => verifyOwnerPasswordAndExecute(() => setEditingIngredient({ ...ing }))} className="text-slate-700 hover:bg-slate-100 text-xs font-bold px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg shadow-sm">✏️ แก้ไขสต็อก</button>
+                              <button onClick={() => setEditingIngredient({ ...ing })} className="text-slate-700 hover:bg-slate-100 text-xs font-bold px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg shadow-sm">✏️ แก้ไข</button>
                               <button onClick={() => handleDeleteIngredient(ing.id)} className="text-red-600 hover:bg-red-50 text-xs font-bold px-3 py-1.5 bg-white border border-red-300 rounded-lg shadow-sm">ลบ</button>
                             </div>
                           </div>
