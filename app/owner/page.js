@@ -5,15 +5,8 @@ import imageCompression from 'browser-image-compression';
 
 const CATEGORIES = ['เมล็ดกาแฟ/ชา', 'นม/ครีมเทียม', 'ไซรัป/ซอส/หวาน', 'บรรจุภัณฑ์/แก้ว', 'อื่นๆ'];
 const RECIPE_CATEGORIES = [
-  'ทั้งหมด', 
-  '☕ Latte', 
-  '☕ Americano', 
-  '🍵 Matcha', 
-  '🍵 Hojicha', 
-  '🥛 โกโก้/นมสด (Cocoa/Milk)', 
-  '🥤 เมนูอื่นๆ (Others)'
+  'ทั้งหมด', '☕ Latte', '☕ Americano', '🍵 Matcha', '🍵 Hojicha', '🥛 โกโก้/นมสด (Cocoa/Milk)', '🥤 เมนูอื่นๆ (Others)'
 ];
-
 const OWNER_PASSWORD = '1234';
 
 function getCategoryIcon(cat) {
@@ -43,12 +36,10 @@ function getUnitCost(ing) {
   return unit > 0 ? price / unit : 0;
 }
 function todayLocal() { return new Date().toLocaleDateString('en-CA'); }
-
 function formatTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
 }
-
 function getRecipeCategory(name) {
   const n = (name || '').toLowerCase();
   if (n.includes('latte')) return '☕ Latte';
@@ -66,6 +57,7 @@ export default function OwnerDashboard() {
   const [selectedDate, setSelectedDate] = useState(todayLocal());
   const [salesData, setSalesData] = useState(null);
   const [expensesData, setExpensesData] = useState([]);
+  const [dailyStaffStock, setDailyStaffStock] = useState({});
   const [allSalesHistory, setAllSalesHistory] = useState([]);
   const [ingredients, setIngredients] = useState([]);
   const [recipesList, setRecipesList] = useState([]);
@@ -73,23 +65,18 @@ export default function OwnerDashboard() {
   const [promotionsList, setPromotionsList] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Modal ยืนยันรหัสผ่านเจ้าของร้าน
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [ownerPasswordInput, setOwnerPasswordInput] = useState('');
   const [pendingAction, setPendingAction] = useState(null);
 
-  // Modal แก้ไขยอดขายประจำวัน
   const [editingSalesModal, setEditingSalesModal] = useState(false);
   const [salesForm, setSalesForm] = useState({
     cash: '', qr: '', grab: '', lineman: '', grabth: '', linemanth: '', actual_cash: '', total_cups: '', staff_name: 'เจ้าของร้าน'
   });
-
-  // Modal แก้ไขสต็อกวัตถุดิบ
-  const [editingIngredient, setEditingIngredient] = useState(null);
+  const [modalStockCounts, setModalStockCounts] = useState({});
 
   const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
   const [staffMessages, setStaffMessages] = useState([]);
-  const [selectedStaffMsg, setSelectedStaffMsg] = useState(null);
   const [internalMsgs, setInternalMsgs] = useState([]);
   const [ownerName, setOwnerName] = useState('');
   const [chatText, setChatText] = useState('');
@@ -105,6 +92,7 @@ export default function OwnerDashboard() {
   const [minStockAlert, setMinStockAlert] = useState('');
   const [unitType, setUnitType] = useState('g');
   const [category, setCategory] = useState(CATEGORIES[0]);
+  const [editingIngredient, setEditingIngredient] = useState(null);
 
   const [menuName, setMenuName] = useState('');
   const [recipeItems, setRecipeItems] = useState([{ ingredient_id: '', qty: '' }]);
@@ -153,6 +141,13 @@ export default function OwnerDashboard() {
       const { data: sales } = await supabase.from('daily_sales').select('*').eq('date', selectedDate).maybeSingle();
       setSalesData(sales || null);
 
+      const { data: stockRep } = await supabase.from('daily_staff_stocks').select('*').eq('date', selectedDate).maybeSingle();
+      if (stockRep && stockRep.stock_data) {
+        setDailyStaffStock(stockRep.stock_data);
+      } else {
+        setDailyStaffStock({});
+      }
+
       const { data: exp } = await supabase.from('expenses').select('*').eq('date', selectedDate);
       setExpensesData(exp || []);
 
@@ -191,7 +186,6 @@ export default function OwnerDashboard() {
     }
   }
 
-  // 1. เปิด Modal แก้ไขยอดขายย้อนหลัง (เช็ครหัสผ่านเจ้าของร้าน)
   function openEditSalesModal() {
     verifyOwnerPasswordAndExecute(() => {
       setSalesForm({
@@ -205,13 +199,19 @@ export default function OwnerDashboard() {
         total_cups: salesData?.total_cups ?? '',
         staff_name: salesData?.staff_name || ownerName || 'เจ้าของร้าน'
       });
+
+      const initialCounts = {};
+      ingredients.forEach(i => {
+        initialCounts[i.id] = dailyStaffStock[i.id] !== undefined ? dailyStaffStock[i.id] : getStock(i);
+      });
+      setModalStockCounts(initialCounts);
       setEditingSalesModal(true);
     });
   }
 
-  async function handleSaveSalesUpdate(e) {
+  async function handleSaveSalesAndStockUpdate(e) {
     e.preventDefault();
-    const payload = {
+    const salesPayload = {
       date: selectedDate,
       cash: Number(salesForm.cash) || 0,
       qr: Number(salesForm.qr) || 0,
@@ -224,11 +224,20 @@ export default function OwnerDashboard() {
       staff_name: salesForm.staff_name || 'เจ้าของร้าน'
     };
 
-    try {
-      const { error } = await supabase.from('daily_sales').upsert([payload], { onConflict: 'date' });
-      if (error) throw error;
+    const stockPayload = {
+      date: selectedDate,
+      stock_data: modalStockCounts,
+      updated_at: new Date().toISOString()
+    };
 
-      alert(`บันทึกยอดขายของวันที่ ${selectedDate} สำเร็จ!`);
+    try {
+      const { error: salesErr } = await supabase.from('daily_sales').upsert([salesPayload], { onConflict: 'date' });
+      if (salesErr) throw salesErr;
+
+      const { error: stockErr } = await supabase.from('daily_staff_stocks').upsert([stockPayload], { onConflict: 'date' });
+      if (stockErr) throw stockErr;
+
+      alert(`บันทึกยอดขายและสต็อกรายวันของวันที่ ${selectedDate} สำเร็จ!`);
       setEditingSalesModal(false);
       fetchOwnerData();
       fetchAllSalesHistory();
@@ -237,60 +246,47 @@ export default function OwnerDashboard() {
     }
   }
 
-  // 2. จัดการเพิ่ม/แก้ไขสต็อก (เช็ครหัสผ่านเฉพาะตอนทำรายการย้อนหลัง)
   async function handleSaveIngredient(e) {
     e.preventDefault();
-    verifyOwnerPasswordAndExecute(async () => {
-      if (!ingName || !totalPrice || !totalUnit) return;
-      const price = Number(totalPrice) || 0;
-      const unit = Number(totalUnit) || 1;
-
-      const payload = {
-        name: ingName.trim(), total_price: price, total_unit: unit,
-        current_stock: toNumOr(currentStock, unit), min_stock_alert: toNumOr(minStockAlert, unit * 0.1),
-        unit_type: unitType, unit_price: price / unit, category: category, is_active: true
-      };
-
-      const { error } = await supabase.from('ingredients').insert([payload]);
-      if (!error) {
-        setIngName(''); setTotalPrice(''); setTotalUnit(''); setCurrentStock(''); setMinStockAlert('');
-        setUnitType('g'); setCategory(CATEGORIES[0]); fetchOwnerData(); alert('เพิ่มวัตถุดิบสำเร็จ!');
-      } else { alert('Error: ' + error.message); }
-    });
+    if (!ingName || !totalPrice || !totalUnit) return;
+    const price = Number(totalPrice) || 0;
+    const unit = Number(totalUnit) || 1;
+    const payload = {
+      name: ingName.trim(), total_price: price, total_unit: unit,
+      current_stock: toNumOr(currentStock, unit), min_stock_alert: toNumOr(minStockAlert, unit * 0.1),
+      unit_type: unitType, unit_price: price / unit, category: category, is_active: true
+    };
+    const { error } = await supabase.from('ingredients').insert([payload]);
+    if (!error) {
+      setIngName(''); setTotalPrice(''); setTotalUnit(''); setCurrentStock(''); setMinStockAlert('');
+      setUnitType('g'); setCategory(CATEGORIES[0]); fetchOwnerData(); alert('เพิ่มวัตถุดิบสำเร็จ!');
+    } else { alert('Error: ' + error.message); }
   }
 
   async function handleUpdateIngredientModal(e) {
     e.preventDefault();
-    verifyOwnerPasswordAndExecute(async () => {
-      if (!editingIngredient) return;
-      const price = Number(editingIngredient.total_price) || 0;
-      const unit = Number(editingIngredient.total_unit) || 1;
-
-      const payload = {
-        name: (editingIngredient.name || '').trim(), total_price: price, total_unit: unit,
-        current_stock: toNumOr(editingIngredient.current_stock, unit), min_stock_alert: toNumOr(editingIngredient.min_stock_alert, unit * 0.1),
-        unit_type: editingIngredient.unit_type || 'g', unit_price: price / unit, category: editingIngredient.category || 'อื่นๆ'
-      };
-
-      const { error } = await supabase.from('ingredients').update(payload).eq('id', editingIngredient.id);
-      if (!error) { setEditingIngredient(null); fetchOwnerData(); alert('อัปเดตสต็อกสำเร็จ!'); }
-      else { alert('Error: ' + error.message); }
-    });
+    if (!editingIngredient) return;
+    const price = Number(editingIngredient.total_price) || 0;
+    const unit = Number(editingIngredient.total_unit) || 1;
+    const payload = {
+      name: (editingIngredient.name || '').trim(), total_price: price, total_unit: unit,
+      current_stock: toNumOr(editingIngredient.current_stock, unit), min_stock_alert: toNumOr(editingIngredient.min_stock_alert, unit * 0.1),
+      unit_type: editingIngredient.unit_type || 'g', unit_price: price / unit, category: editingIngredient.category || 'อื่นๆ'
+    };
+    const { error } = await supabase.from('ingredients').update(payload).eq('id', editingIngredient.id);
+    if (!error) { setEditingIngredient(null); fetchOwnerData(); alert('อัปเดตวัตถุดิบสำเร็จ!'); }
+    else { alert('Error: ' + error.message); }
   }
 
   async function toggleIngredientActive(ing) {
-    verifyOwnerPasswordAndExecute(async () => {
-      const { error } = await supabase.from('ingredients').update({ is_active: ing.is_active === false }).eq('id', ing.id);
-      if (!error) fetchOwnerData();
-    });
+    const { error } = await supabase.from('ingredients').update({ is_active: ing.is_active === false }).eq('id', ing.id);
+    if (!error) fetchOwnerData();
   }
 
   async function handleDeleteIngredient(id) {
-    verifyOwnerPasswordAndExecute(async () => {
-      if (!confirm('ต้องการลบรายการนี้ใช่ไหมครับ?')) return;
-      const { error } = await supabase.from('ingredients').delete().eq('id', id);
-      if (!error) fetchOwnerData();
-    });
+    if (!confirm('ต้องการลบรายการนี้ใช่ไหมครับ?')) return;
+    const { error } = await supabase.from('ingredients').delete().eq('id', id);
+    if (!error) fetchOwnerData();
   }
 
   async function fetchPromotions() {
@@ -314,25 +310,16 @@ export default function OwnerDashboard() {
       await supabase.from('staff_messages').update({ is_read: true }).eq('id', msg.id);
       fetchStaffMessages();
     }
-    setSelectedStaffMsg({ ...msg, is_read: true });
-  }
-  async function handleDeleteStaffMessage(id) {
-    if (!confirm('ต้องการลบข้อความนี้ใช่ไหม?')) return;
-    const { error } = await supabase.from('staff_messages').delete().eq('id', id);
-    if (!error) { setSelectedStaffMsg(null); fetchStaffMessages(); }
   }
 
   async function handleSendChat(fileUrl = null, fileType = null) {
     if (!ownerName.trim()) { alert('กรุณาใส่ชื่อผู้ส่งก่อนครับ'); return; }
     if (!chatText.trim() && !fileUrl) return;
-
     localStorage.setItem('owner_name', ownerName.trim());
     const { error } = await supabase.from('internal_messages').insert([{
       author: ownerName.trim(), message: chatText.trim(), file_url: fileUrl, file_type: fileType
     }]);
-
     if (!error) { setChatText(''); fetchInternalMessages(); }
-    else { alert('ส่งไม่สำเร็จ: ' + error.message); }
   }
 
   async function handleChatFileUpload(e) {
@@ -348,12 +335,11 @@ export default function OwnerDashboard() {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const fileName = `chat-${Date.now()}-${safeName}`;
       const { error } = await supabase.storage.from('sales-proofs').upload(fileName, fileToUpload);
-
       if (!error) {
         const { data } = supabase.storage.from('sales-proofs').getPublicUrl(fileName);
         if (data?.publicUrl) await handleSendChat(data.publicUrl, isImage ? 'image' : 'file');
-      } else { alert('อัปโหลดไฟล์ไม่สำเร็จ: ' + error.message); }
-    } catch (err) { console.error(err); alert('อัปโหลดไฟล์ไม่สำเร็จ'); }
+      }
+    } catch (err) { console.error(err); }
     setUploadingChatFile(false);
   }
 
@@ -361,21 +347,15 @@ export default function OwnerDashboard() {
     if (!menuName.trim()) { alert('กรุณาใส่ชื่อเมนูก่อนครับ'); return; }
     const cleanItems = recipeItems.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
-
     const payload = {
-      menu_name: menuName.trim(), 
-      cogs, 
-      ingredients_detail: cleanItems,
-      base_price: Number(basePrice) || 0,
-      target_gp: Number(targetGP) || 30, 
-      has_milk_option: hasMilkOption
+      menu_name: menuName.trim(), cogs, ingredients_detail: cleanItems,
+      base_price: Number(basePrice) || 0, target_gp: Number(targetGP) || 30, has_milk_option: hasMilkOption
     };
-
     const { error } = await supabase.from('recipes').insert([payload]);
     if (!error) {
       alert('บันทึกสูตรสำเร็จ!');
       setMenuName(''); setRecipeItems([{ ingredient_id: '', qty: '' }]); setBasePrice(''); fetchOwnerData();
-    } else { alert('Error: ' + error.message); }
+    }
   }
 
   async function handleUpdateRecipeModal(e) {
@@ -383,19 +363,13 @@ export default function OwnerDashboard() {
     if (!editingRecipeModal) return;
     const cleanItems = editingRecipeModal.ingredients_detail.filter(item => item.ingredient_id !== '');
     const cogs = cleanItems.reduce((sum, item) => sum + getUnitCost(ingredients.find(i => i.id === Number(item.ingredient_id))) * Number(item.qty), 0);
-
     const payload = {
-      menu_name: editingRecipeModal.menu_name.trim(), 
-      cogs, 
-      ingredients_detail: cleanItems,
-      base_price: Number(editingRecipeModal.base_price) || 0,
-      target_gp: Number(editingRecipeModal.target_gp) || 30,
+      menu_name: editingRecipeModal.menu_name.trim(), cogs, ingredients_detail: cleanItems,
+      base_price: Number(editingRecipeModal.base_price) || 0, target_gp: Number(editingRecipeModal.target_gp) || 30,
       has_milk_option: editingRecipeModal.has_milk_option || false
     };
-
     const { error } = await supabase.from('recipes').update(payload).eq('id', editingRecipeModal.id);
     if (!error) { setEditingRecipeModal(null); fetchOwnerData(); alert('อัปเดตสูตรสำเร็จ!'); }
-    else { alert('Error: ' + error.message); }
   }
 
   async function handleDeleteRecipe(id) {
@@ -410,7 +384,6 @@ export default function OwnerDashboard() {
       const orig = ingredients.find(i => i.id === Number(item.ingredient_id));
       if (!orig) return;
       let active = orig;
-
       if (rec.has_milk_option && milkType && milkType !== 'fresh') {
         const nameL = (orig.name || '').toLowerCase();
         if (orig.category === 'นม/ครีมเทียม' || nameL.includes('ray') || nameL.includes('milk') || nameL.includes('นม')) {
@@ -419,7 +392,6 @@ export default function OwnerDashboard() {
           if (found) active = found;
         }
       }
-
       totalCost += getUnitCost(active) * Number(item.qty);
     });
     return totalCost;
@@ -448,6 +420,7 @@ export default function OwnerDashboard() {
     const { error } = await supabase.from('promotions').insert([{ title: promoTitle.trim(), description: promoDesc, file_url: promoFileUrl }]);
     if (!error) { setPromoTitle(''); setPromoDesc(''); setPromoFileUrl(''); fetchPromotions(); alert('บันทึกโปรโมชันสำเร็จ!'); }
   }
+
   async function handleDeletePromo(id) {
     if (!confirm('ลบโปรโมชันนี้ใช่ไหม?')) return;
     const { error } = await supabase.from('promotions').delete().eq('id', id);
@@ -524,15 +497,7 @@ export default function OwnerDashboard() {
               <p className="text-xs text-slate-500">คุณกำลังทำรายการแก้ไขข้อมูลย้อนหลังวันที่ (<span className="font-bold text-slate-700">{selectedDate}</span>) กรุณาใส่รหัสผ่าน</p>
             </div>
             <form onSubmit={handlePasswordSubmit} className="space-y-3">
-              <input 
-                type="password" 
-                placeholder="รหัสผ่านเจ้าของร้าน" 
-                value={ownerPasswordInput} 
-                onChange={(e) => setOwnerPasswordInput(e.target.value)} 
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium text-center tracking-widest" 
-                autoFocus
-                required 
-              />
+              <input type="password" placeholder="รหัสผ่านเจ้าของร้าน" value={ownerPasswordInput} onChange={(e) => setOwnerPasswordInput(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium text-center tracking-widest" autoFocus required />
               <div className="flex gap-2 pt-1">
                 <button type="button" onClick={() => { setShowPasswordModal(false); setOwnerPasswordInput(''); }} className="flex-1 bg-slate-200 font-bold py-2.5 rounded-xl text-xs">ยกเลิก</button>
                 <button type="submit" className="flex-1 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs shadow">ยืนยัน</button>
@@ -542,19 +507,19 @@ export default function OwnerDashboard() {
         </div>
       )}
 
-      {/* Modal แก้ไขยอดขายประจำวัน */}
+      {/* Modal แก้ไขยอดขาย & สต็อกรายวัน */}
       {editingSalesModal && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-2xl w-full p-6 space-y-5 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-              <h3 className="font-bold text-slate-800 text-base">✏️ แก้ไข/บันทึกยอดขายประจำวัน ({selectedDate})</h3>
+              <h3 className="font-bold text-slate-800 text-base">✏️ แก้ไขยอดขาย & สต็อกรายวัน ({selectedDate})</h3>
               <button onClick={() => setEditingSalesModal(false)} className="bg-slate-100 font-bold px-3 py-1 rounded-full text-xs">✕</button>
             </div>
             
-            <form onSubmit={handleSaveSalesUpdate} className="space-y-4">
+            <form onSubmit={handleSaveSalesAndStockUpdate} className="space-y-5">
               <div className="space-y-3">
                 <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 ยอดขายประจำวัน</h4>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอดเงินสด (฿)</label><input type="number" step="0.01" value={salesForm.cash} onChange={(e) => setSalesForm({...salesForm, cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                   <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด QR Code (฿)</label><input type="number" step="0.01" value={salesForm.qr} onChange={(e) => setSalesForm({...salesForm, qr: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                   <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด Grab (฿)</label><input type="number" step="0.01" value={salesForm.grab} onChange={(e) => setSalesForm({...salesForm, grab: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
@@ -562,64 +527,41 @@ export default function OwnerDashboard() {
                   <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด GrabTH (฿)</label><input type="number" step="0.01" value={salesForm.grabth} onChange={(e) => setSalesForm({...salesForm, grabth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                   <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ยอด LineManTH (฿)</label><input type="number" step="0.01" value={salesForm.linemanth} onChange={(e) => setSalesForm({...salesForm, linemanth: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 pt-2">
                   <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">เงินสดจริงในลิ้นชัก (฿)</label><input type="number" step="0.01" value={salesForm.actual_cash} onChange={(e) => setSalesForm({...salesForm, actual_cash: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                   <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">จำนวนแก้วรวม</label><input type="number" value={salesForm.total_cups} onChange={(e) => setSalesForm({...salesForm, total_cups: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
+                  <div><label className="block text-[11px] font-semibold text-slate-600 mb-1">ผู้บันทึก</label><input type="text" value={salesForm.staff_name} onChange={(e) => setSalesForm({...salesForm, staff_name: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                 </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">ผู้บันทึก</label>
-                  <input type="text" value={salesForm.staff_name} onChange={(e) => setSalesForm({...salesForm, staff_name: e.target.value})} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" />
+              </div>
+
+              <div className="space-y-3 pt-4 border-t border-slate-200">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📦 สต็อกรายวัน (ที่พนักงานต้องกรอก)</h4>
+                <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
+                  {ingredients.filter(i => i.is_active !== false).map(ing => (
+                    <div key={ing.id} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border text-xs gap-3">
+                      <span className="font-bold text-slate-800 flex-1">{ing.name} <span className="text-slate-400">({ing.unit_type})</span></span>
+                      <input 
+                        type="number" 
+                        step="0.01"
+                        value={modalStockCounts[ing.id] !== undefined ? modalStockCounts[ing.id] : getStock(ing)} 
+                        onChange={(e) => setModalStockCounts({...modalStockCounts, [ing.id]: e.target.value})} 
+                        className="w-32 bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none font-bold text-right"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
 
               <div className="flex gap-2 pt-3 border-t border-slate-200">
                 <button type="button" onClick={() => setEditingSalesModal(false)} className="w-1/3 bg-slate-200 font-bold py-2.5 rounded-xl text-sm">ยกเลิก</button>
-                <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกยอดขาย</button>
+                <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกทั้งหมด</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Modal แก้ไขสต็อกวัตถุดิบ */}
-      {editingIngredient && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-              <h3 className="font-bold text-slate-800 text-base">✏️ แก้ไขสต็อกวัตถุดิบ ({selectedDate})</h3>
-              <button onClick={() => setEditingIngredient(null)} className="bg-slate-100 font-bold px-3 py-1 rounded-full text-xs">✕</button>
-            </div>
-            <form onSubmit={handleUpdateIngredientModal} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ชื่อ</label><input type="text" value={editingIngredient.name || ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, name: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">หมวด</label>
-                  <select value={editingIngredient.category || 'อื่นๆ'} onChange={(e) => setEditingIngredient({ ...editingIngredient, category: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ราคารวม (฿)</label><input type="number" step="0.01" value={editingIngredient.total_price ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, total_price: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">ปริมาณรวม</label><input type="number" step="0.01" value={editingIngredient.total_unit ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, total_unit: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required /></div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">คงเหลือ</label><input type="number" step="0.01" value={editingIngredient.current_stock ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, current_stock: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">แจ้งเตือนขั้นต่ำ</label><input type="number" step="0.01" value={editingIngredient.min_stock_alert ?? ''} onChange={(e) => setEditingIngredient({ ...editingIngredient, min_stock_alert: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">หน่วย</label>
-                  <select value={editingIngredient.unit_type || 'g'} onChange={(e) => setEditingIngredient({ ...editingIngredient, unit_type: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
-                    <option value="g">g</option><option value="ml">ml</option><option value="pcs">pcs</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setEditingIngredient(null)} className="w-1/3 bg-slate-200 font-bold py-2.5 rounded-xl text-sm">ยกเลิก</button>
-                <button type="submit" className="w-2/3 bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">💾 บันทึกสต็อก</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
+      {/* Modal ดูรายละเอียดการขาย */}
       {selectedSaleDetail && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -630,13 +572,11 @@ export default function OwnerDashboard() {
               </div>
               <button onClick={() => setSelectedSaleDetail(null)} className="bg-slate-100 hover:bg-slate-200 font-bold px-3 py-1 rounded-full text-xs">✕</button>
             </div>
-
             <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border text-xs">
               <div>พนักงานผู้บันทึก: <span className="font-bold">{selectedSaleDetail.staff_name || '-'}</span></div>
               <div>แก้วรวม: <span className="font-bold">{selectedSaleDetail.total_cups || 0} แก้ว</span></div>
               <div className="col-span-2">เงินสดจริงในลิ้นชัก: <span className="font-bold text-emerald-700">{(Number(selectedSaleDetail.actual_cash) || 0).toLocaleString()} ฿</span></div>
             </div>
-
             <div className="space-y-1">
               <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">💵 ยอดแยกตามช่องทาง</h4>
               <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-xl border">
@@ -648,27 +588,12 @@ export default function OwnerDashboard() {
                 <div>LineManTH: <span className="font-bold">{(Number(selectedSaleDetail.linemanth) || 0).toLocaleString()} ฿</span></div>
               </div>
             </div>
-
-            <div className="space-y-2">
-              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📸 รูปสลิปหลักฐานจากพนักงาน</h4>
-              {Array.isArray(selectedSaleDetail.proof_images) && selectedSaleDetail.proof_images.length > 0 ? (
-                <div className="flex gap-2 flex-wrap">
-                  {selectedSaleDetail.proof_images.map((imgUrl, i) => (
-                    <a key={i} href={imgUrl} target="_blank" rel="noopener noreferrer" className="block w-24 h-24 rounded-lg overflow-hidden border shadow-sm">
-                      <img src={imgUrl} alt="slip" className="w-full h-full object-cover" />
-                    </a>
-                  ))}
-                </div>
-              ) : <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl text-center">ไม่มีรูปแนบในวันนี้</p>}
-            </div>
-
-            <div className="pt-2">
-              <button onClick={() => setSelectedSaleDetail(null)} className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">ปิดหน้าต่าง</button>
-            </div>
+            <button onClick={() => setSelectedSaleDetail(null)} className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">ปิดหน้าต่าง</button>
           </div>
         </div>
       )}
 
+      {/* Modal แก้ไขสูตร */}
       {editingRecipeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-300 shadow-2xl rounded-2xl max-w-xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -681,14 +606,12 @@ export default function OwnerDashboard() {
                 <label className="block text-xs font-semibold text-slate-600 mb-1">ชื่อเมนู</label>
                 <input type="text" value={editingRecipeModal.menu_name || ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, menu_name: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-sm outline-none font-medium" required />
               </div>
-              
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!editingRecipeModal.has_milk_option} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, has_milk_option: e.target.checked })} className="w-4 h-4 accent-slate-800" />
                   <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
                 </label>
               </div>
-
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-bold text-slate-700">ส่วนผสมต่อ 1 แก้ว</label>
@@ -713,7 +636,6 @@ export default function OwnerDashboard() {
                   </div>
                 ))}
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="block text-xs font-semibold text-slate-600 mb-1">ราคาหน้าร้าน</label><input type="number" value={editingRecipeModal.base_price ?? ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, base_price: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
                 <div><label className="block text-xs font-semibold text-slate-600 mb-1">GP (%)</label><input type="number" value={editingRecipeModal.target_gp ?? ''} onChange={(e) => setEditingRecipeModal({ ...editingRecipeModal, target_gp: e.target.value })} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
@@ -727,39 +649,31 @@ export default function OwnerDashboard() {
         </div>
       )}
 
+      {/* Main Container */}
       <div className="max-w-5xl mx-auto space-y-6">
-
         <div className="bg-gradient-to-r from-slate-100 via-zinc-100 to-slate-200 shadow-xl rounded-2xl p-6 border border-slate-400 flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
             <h1 className="text-2xl font-black text-slate-800">⚙️ ระบบจัดการร้านค้า</h1>
             <p className="text-sm text-slate-600 font-medium">ควบคุมยอดขาย สต็อก สูตรเครื่องดื่ม และพูดคุยภายใน</p>
           </div>
-
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-white/90 px-3 py-2 rounded-xl border border-slate-300 shadow-sm">
               <label className="text-xs font-bold text-slate-700">📅 เลือกดูวันที่:</label>
-              <input 
-                type="date" 
-                value={selectedDate} 
-                onChange={(e) => setSelectedDate(e.target.value)} 
-                className="bg-transparent text-sm font-semibold outline-none cursor-pointer" 
-              />
+              <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="bg-transparent text-sm font-semibold outline-none cursor-pointer" />
             </div>
-
-            <button onClick={() => setActiveTab('messages')} className="relative bg-white w-11 h-11 rounded-2xl border border-slate-300 shadow-sm hover:bg-slate-50 flex items-center justify-center transition" title="ข้อความด่วนจากพนักงาน">
+            <button onClick={() => setActiveTab('messages')} className="relative bg-white w-11 h-11 rounded-2xl border border-slate-300 shadow-sm hover:bg-slate-50 flex items-center justify-center transition">
               <span className="text-xl">💬</span>
               {unreadMessages.length > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] font-bold min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center border-2 border-white">
-                  {unreadMessages.length}
-                </span>
+                <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] font-bold min-w-[20px] h-5 px-1 rounded-full flex items-center justify-center border-2 border-white">{unreadMessages.length}</span>
               )}
             </button>
           </div>
         </div>
 
+        {/* Navigation Tabs */}
         <div className="flex bg-slate-300/80 p-1.5 rounded-2xl shadow-inner border border-slate-400 gap-1 overflow-x-auto text-xs md:text-sm">
-          <button onClick={() => setActiveTab('sales')} className={tabClass('sales', activeTab)}>📊 ยอดขาย</button>
-          <button onClick={() => setActiveTab('ingredients')} className={tabClass('ingredients', activeTab)}>📦 สต็อก & วัตถุดิบ {lowStockItems.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{lowStockItems.length}</span>}</button>
+          <button onClick={() => setActiveTab('sales')} className={tabClass('sales', activeTab)}>📊 ยอดขาย & สต็อกรายวัน</button>
+          <button onClick={() => setActiveTab('ingredients')} className={tabClass('ingredients', activeTab)}>📦 จัดการวัตถุดิบ {lowStockItems.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{lowStockItems.length}</span>}</button>
           <button onClick={() => setActiveTab('recipe')} className={tabClass('recipe', activeTab)}>🥤 สูตร & GP</button>
           <button onClick={() => setActiveTab('messages')} className={tabClass('messages', activeTab)}>💬 ข้อความ {unreadMessages.length > 0 && <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full ml-1">{unreadMessages.length}</span>}</button>
           <button onClick={() => setActiveTab('internal_chat')} className={tabClass('internal_chat', activeTab)}>💬 Internal Message</button>
@@ -767,15 +681,16 @@ export default function OwnerDashboard() {
           <button onClick={() => setActiveTab('staff_logs')} className={tabClass('staff_logs', activeTab)}>👥 ประวัติ</button>
         </div>
 
+        {/* Tab 1: Sales & Daily Stock */}
         <div className={activeTab === 'sales' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
             <div className="border-b border-slate-300 pb-3 flex justify-between items-center gap-2 flex-wrap">
               <div>
-                <h2 className="font-bold text-lg text-slate-800">สรุปยอดขายประจำวัน ({selectedDate})</h2>
+                <h2 className="font-bold text-lg text-slate-800">สรุปยอดขาย & สต็อกรายวัน ประจำวันที่ ({selectedDate})</h2>
                 <p className="text-xs text-slate-500">พนักงานผู้บันทึก: <span className="font-bold">{salesData?.staff_name || 'ยังไม่บันทึก'}</span></p>
               </div>
               <button onClick={openEditSalesModal} className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-4 py-2 rounded-xl text-xs shadow transition">
-                ✏️ แก้ไข/บันทึกยอดขายย้อนหลัง
+                ✏️ แก้ไขยอดขาย & สต็อกย้อนหลัง
               </button>
             </div>
 
@@ -800,139 +715,36 @@ export default function OwnerDashboard() {
                 </div>
 
                 <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
-                  <h3 className="text-xs font-bold text-red-600 uppercase tracking-wider">💸 รายจ่ายเงินสดหน้าร้าน</h3>
-                  {expensesData.length > 0 ? (
-                    <div className="space-y-2">
-                      {expensesData.map((exp, idx) => (
-                        <div key={idx} className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border text-xs">
-                          <span className="font-bold text-slate-700">• {exp.name || exp.expense_name}</span>
-                          <span className="font-bold text-red-600">{(Number(exp.amount) || Number(exp.price) || 0).toLocaleString()} ฿</span>
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📦 สต็อกรายวันที่พนักงานต้องกรอก ({selectedDate})</h3>
+                  {Object.keys(dailyStaffStock).length > 0 ? (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {ingredients.filter(i => i.is_active !== false).map(ing => (
+                        <div key={ing.id} className="bg-slate-50 p-2.5 rounded-xl border text-xs flex justify-between items-center">
+                          <span className="font-bold text-slate-700 truncate mr-2">{ing.name}:</span>
+                          <span className="font-black text-slate-900 shrink-0">{dailyStaffStock[ing.id] !== undefined ? dailyStaffStock[ing.id] : '-'} {ing.unit_type}</span>
                         </div>
                       ))}
-                      <div className="text-right text-xs font-bold text-red-600 pt-1">
-                        รวมรายจ่ายหน้าร้านทั้งสิ้น: {totalExpensesAmount.toLocaleString()} ฿
-                      </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl text-center">ไม่มีรายจ่ายหน้าร้านในวันนี้</p>
+                    <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl text-center">ยังไม่มีการบันทึกสต็อกรายวันในวันที่เลือก (สามารถกดปุ่มแก้ไขด้านบนเพื่อเติมย้อนหลังได้)</p>
                   )}
                 </div>
-
-                {Array.isArray(salesData.proof_images) && salesData.proof_images.length > 0 && (
-                  <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-2">
-                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">📸 รูปหลักฐานการขาย / สลิปจากพนักงาน</h3>
-                    <div className="flex gap-3 flex-wrap">
-                      {salesData.proof_images.map((imgUrl, i) => (
-                        <a key={i} href={imgUrl} target="_blank" rel="noopener noreferrer" className="block w-28 h-28 rounded-lg overflow-hidden border border-slate-300 shadow-sm hover:opacity-90 transition">
-                          <img src={imgUrl} alt={`proof-${i}`} className="w-full h-full object-cover" />
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="text-center py-10 text-slate-500 font-medium bg-white rounded-xl border border-slate-300 p-6 space-y-3">
                 <p>ยังไม่มีข้อมูลการบันทึกปิดร้านของวันที่เลือก ({selectedDate})</p>
-                <button onClick={openEditSalesModal} className="bg-slate-800 text-white font-bold px-5 py-2 rounded-xl text-xs shadow">
-                  + เพิ่มยอดขายของวันนี้
-                </button>
+                <button onClick={openEditSalesModal} className="bg-slate-800 text-white font-bold px-5 py-2 rounded-xl text-xs shadow">+ เพิ่มยอดขาย & สต็อกของวันนี้</button>
               </div>
             )}
-
-            <div className="space-y-3 pt-4 border-t border-slate-300">
-              <h3 className="font-bold text-base text-slate-800">📋 รายการยอดขายย้อนหลังทั้งหมด (คลิกแถวเพื่อดูรายละเอียด & สลิป)</h3>
-              <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-x-auto max-h-80 overflow-y-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="sticky top-0 bg-slate-200 font-bold border-b border-slate-300 z-10">
-                    <tr>
-                      <th className="p-3">วันที่</th>
-                      <th className="p-3">ผู้บันทึก</th>
-                      <th className="p-3 text-center">แก้วรวม</th>
-                      <th className="p-3 text-right">ยอดขายรวม</th>
-                      <th className="p-3 text-center">ดูรายละเอียด</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 font-medium">
-                    {allSalesHistory.length > 0 ? allSalesHistory.map(row => {
-                      const rowTotal = ['cash', 'qr', 'grab', 'lineman', 'grabth', 'linemanth'].reduce((s, k) => s + (Number(row[k]) || 0), 0);
-                      return (
-                        <tr key={row.date} onClick={() => setSelectedSaleDetail(row)} className="hover:bg-slate-50 cursor-pointer transition">
-                          <td className="p-3 font-bold">{row.date}</td>
-                          <td className="p-3">{row.staff_name || '-'}</td>
-                          <td className="p-3 text-center">{row.total_cups || 0} แก้ว</td>
-                          <td className="p-3 text-right font-black text-emerald-700">{rowTotal.toLocaleString()} ฿</td>
-                          <td className="p-3 text-center">
-                            <span className="text-xs bg-slate-800 text-white px-3 py-1 rounded-lg font-bold">🔍 เปิดดู</span>
-                          </td>
-                        </tr>
-                      );
-                    }) : (
-                      <tr><td colSpan="5" className="text-center py-8 text-slate-400">ยังไม่มีประวัติการขายในระบบ</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="space-y-4 pt-6 border-t-2 border-slate-300">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">📈</span>
-                <h3 className="font-black text-lg text-slate-800 uppercase tracking-wide">รายงานวิเคราะห์ยอดขาย (Sales Analytics)</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
-                  <p className="text-xs font-bold text-slate-500 uppercase">📅 วันนี้ ({todayStr})</p>
-                  <p className="text-xl font-black text-slate-800">{todaySalesSum.toLocaleString()} ฿</p>
-                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{todayCupsSum} แก้ว</span></p>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
-                  <p className="text-xs font-bold text-slate-500 uppercase">📊 7 วันล่าสุด (สัปดาห์นี้)</p>
-                  <p className="text-xl font-black text-slate-800">{weekSalesSum.toLocaleString()} ฿</p>
-                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{weekCupsSum} แก้ว</span></p>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
-                  <p className="text-xs font-bold text-slate-500 uppercase">🗓️ เดือนนี้ ({currentMonth})</p>
-                  <p className="text-xl font-black text-slate-800">{monthSalesSum.toLocaleString()} ฿</p>
-                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{monthCupsSum} แก้ว</span></p>
-                </div>
-                <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-1">
-                  <p className="text-xs font-bold text-slate-500 uppercase">🏆 ปีนี้ ({currentYear})</p>
-                  <p className="text-xl font-black text-slate-800">{yearSalesSum.toLocaleString()} ฿</p>
-                  <p className="text-xs text-slate-600 font-medium">จำนวนขาย: <span className="font-bold text-emerald-700">{yearCupsSum} แก้ว</span></p>
-                </div>
-              </div>
-            </div>
-
           </div>
         </div>
 
+        {/* Tab 2: Ingredients */}
         <div className={activeTab === 'ingredients' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก ({selectedDate})</h2>
-
-            {lowStockItems.length > 0 && (
-              <div className="bg-red-50 border-2 border-red-300 p-4 rounded-2xl shadow-sm space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">🚨</span>
-                  <h3 className="font-black text-sm text-red-800 uppercase tracking-wide">แจ้งเตือนวัตถุดิบใกล้หมด ({lowStockItems.length} รายการที่ต้องรีบเติม)</h3>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {lowStockItems.map(item => (
-                    <div key={item.id} className="bg-white border border-red-200 p-3 rounded-xl flex justify-between items-center shadow-xs">
-                      <div>
-                        <p className="font-bold text-xs text-slate-800">{item.name}</p>
-                        <p className="text-[10px] text-red-600 font-bold">คงเหลือ: {getStock(item)} {item.unit_type} (ขั้นต่ำ: {getAlertLimit(item)})</p>
-                      </div>
-                      <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-lg font-bold shrink-0">ใกล้หมด</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">จัดการราคาต้นทุนวัตถุดิบและสต็อก</h2>
             <form onSubmit={handleSaveIngredient} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
-              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่ {selectedDate !== todayLocal() && <span className="text-amber-600 text-xs">(⚠️ กำลังเพิ่มย้อนหลัง ต้องใช้รหัสยืนยัน)</span>}</h3>
+              <h3 className="text-sm font-bold text-slate-700">➕ เพิ่มรายการวัตถุดิบใหม่</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <input type="text" placeholder="ชื่อวัตถุดิบ" value={ingName} onChange={(e) => setIngName(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
                 <select value={category} onChange={(e) => setCategory(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
@@ -943,325 +755,44 @@ export default function OwnerDashboard() {
                   <input type="number" step="0.01" placeholder="ปริมาณซื้อรวม" value={totalUnit} onChange={(e) => setTotalUnit(e.target.value)} className="w-1/2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required />
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-slate-200">
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">สต็อกคงเหลือ</label><input type="number" step="0.01" placeholder="เช่น 500" value={currentStock} onChange={(e) => setCurrentStock(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">แจ้งเตือนขั้นต่ำ</label><input type="number" step="0.01" placeholder="เช่น 100" value={minStockAlert} onChange={(e) => setMinStockAlert(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" /></div>
-                <div><label className="block text-xs font-semibold text-slate-600 mb-1">หน่วย</label>
-                  <select value={unitType} onChange={(e) => setUnitType(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium">
-                    <option value="g">กรัม (g)</option><option value="ml">มิลลิลิตร (ml)</option><option value="pcs">ชิ้น (pcs)</option>
-                  </select>
-                </div>
-              </div>
-              <button type="submit" className="w-full bg-gradient-to-r from-slate-700 to-zinc-800 text-white font-bold py-2.5 rounded-xl text-sm shadow transition">บันทึกเพิ่มวัตถุดิบ</button>
+              <button type="submit" className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">บันทึกเพิ่มวัตถุดิบ</button>
             </form>
-
-            <div className="bg-white p-3 rounded-xl border border-slate-300 shadow-sm flex flex-col md:flex-row gap-2">
-              <input type="text" placeholder="🔍 ค้นหาชื่อวัตถุดิบ..." value={searchStockQuery} onChange={(e) => setSearchStockQuery(e.target.value)} className="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" />
-              <select value={stockSortType} onChange={(e) => setStockSortType(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-bold text-slate-700 cursor-pointer">
-                <option value="az">🔤 เรียง A ➔ Z</option>
-                <option value="za">🔤 เรียง Z ➔ A</option>
-                <option value="active_first">🟢 เปิดนับสต็อกขึ้นก่อน</option>
-                <option value="inactive_first">🔴 ปิดนับสต็อกขึ้นก่อน</option>
-              </select>
-              <select value={stockStatusFilter} onChange={(e) => setStockStatusFilter(e.target.value)} className="bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-bold text-slate-700 cursor-pointer">
-                <option value="all">📋 ทั้งหมด</option>
-                <option value="active">🟢 เปิดนับ</option>
-                <option value="inactive">🔴 ปิดนับ</option>
-                <option value="low">🚨 ใกล้หมด</option>
-              </select>
-            </div>
-
-            <div className="space-y-6">
-              {CATEGORIES.map(cat => {
-                const items = getFilteredStock(cat);
-                if (items.length === 0) return null;
-                return (
-                  <div key={cat} className="bg-white shadow-xl rounded-2xl p-5 border border-slate-300 space-y-3">
-                    <h3 className="font-black text-base text-slate-800 bg-slate-200 px-4 py-2 rounded-xl border border-slate-300 flex items-center gap-2">
-                      <span className="text-xl">{getCategoryIcon(cat)}</span> หมวดหมู่: {cat}
-                    </h3>
-                    <div className="divide-y divide-slate-200">
-                      {items.map(ing => {
-                        const stock = getStock(ing);
-                        const isLow = isLowStock(ing);
-                        const isActive = ing.is_active !== false;
-                        return (
-                          <div key={ing.id} className="flex flex-col md:flex-row md:justify-between md:items-center gap-2 text-sm py-3">
-                            <div>
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-bold text-slate-800">🔹 {ing.name}</span>
-                                {isLow && <span className="bg-red-100 text-red-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-300 animate-pulse">🚨 ใกล้หมด</span>}
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-slate-200 text-slate-600 border-slate-300'}`}>
-                                  {isActive ? '🟢 เปิดนับ' : '🔴 ปิดนับ'}
-                                </span>
-                              </div>
-                              <p className="text-xs text-slate-500 font-medium mt-1">
-                                ซื้อ {ing.total_price || '-'} ฿ / {ing.total_unit || '-'} {ing.unit_type}
-                                <span className="text-emerald-700 font-bold ml-2">(ตก {getUnitCost(ing).toFixed(4)} ฿ / {ing.unit_type})</span>
-                                <span className="text-slate-700 font-semibold ml-2">| คงเหลือ: {stock} {ing.unit_type}</span>
-                              </p>
-                            </div>
-                            <div className="flex gap-2 shrink-0">
-                              <button onClick={() => toggleIngredientActive(ing)} className={`text-xs font-bold px-3 py-1.5 rounded-lg border shadow-sm ${isActive ? 'bg-amber-50 text-amber-700 border-amber-300' : 'bg-emerald-50 text-emerald-700 border-emerald-300'}`}>{isActive ? 'ปิดการนับ' : 'เปิดการนับ'}</button>
-                              <button onClick={() => setEditingIngredient({ ...ing })} className="text-slate-700 hover:bg-slate-100 text-xs font-bold px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg shadow-sm">✏️ แก้ไข</button>
-                              <button onClick={() => handleDeleteIngredient(ing.id)} className="text-red-600 hover:bg-red-50 text-xs font-bold px-3 py-1.5 bg-white border border-red-300 rounded-lg shadow-sm">ลบ</button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           </div>
         </div>
 
-        {/* 🥤 แท็บสูตรเครื่องดื่ม */}
+        {/* Tab 3: Recipe */}
         <div className={activeTab === 'recipe' ? 'block' : 'hidden'}>
-          <div className="space-y-6">
-            <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-              <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🥤 เพิ่มสูตรเครื่องดื่มใหม่ & คำนวณต้นทุน</h2>
-              <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-300 shadow-sm">
-                <input type="text" placeholder="ชื่อเมนู เช่น Latte, Americano, Matcha, Hojicha" value={menuName} onChange={(e) => setMenuName(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium" />
-                
-                {/* ตัวเลือกเปลี่ยนชนิดนม */}
-                <div className="flex gap-6 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={hasMilkOption} onChange={(e) => setHasMilkOption(e.target.checked)} className="w-4 h-4 accent-slate-800 rounded" />
-                    <span className="text-xs font-bold text-slate-700">🥛 เปลี่ยนชนิดนมได้</span>
-                  </label>
-                </div>
-
-                <div className="space-y-2 pt-2">
-                  <div className="flex justify-between items-center"><label className="text-xs font-bold text-slate-700">ส่วนผสมต่อ 1 แก้ว</label><button type="button" onClick={() => setRecipeItems([...recipeItems, { ingredient_id: '', qty: '' }])} className="text-xs bg-slate-700 text-white font-bold px-3 py-1.5 rounded-lg">+ เพิ่ม</button></div>
-                  {recipeItems.map((item, idx) => (
-                    <div key={idx} className="flex gap-2 items-center">
-                      <select value={item.ingredient_id} onChange={(e) => {
-                        const list = [...recipeItems]; list[idx].ingredient_id = e.target.value; setRecipeItems(list);
-                      }} className="flex-1 bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-medium outline-none">
-                        <option value="">-- เลือกวัตถุดิบ --</option>
-                        {ingredients.map(i => <option key={i.id} value={i.id}>{i.name} ({i.unit_type})</option>)}
-                      </select>
-                      <input type="number" step="0.01" placeholder="ปริมาณ" value={item.qty} onChange={(e) => {
-                        const list = [...recipeItems]; list[idx].qty = e.target.value; setRecipeItems(list);
-                      }} className="w-28 bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs font-medium outline-none" />
-                      {recipeItems.length > 1 && <button type="button" onClick={() => setRecipeItems(recipeItems.filter((_, i) => i !== idx))} className="text-red-600 font-bold px-1">✕</button>}
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-emerald-50 border border-emerald-300 p-3.5 rounded-xl flex justify-between items-center text-sm font-bold text-emerald-900">
-                  <span>ต้นทุนรวม (COGS):</span>
-                  <span className="text-lg font-black">{recipeItems.reduce((sum, it) => sum + getUnitCost(ingredients.find(i => i.id === Number(it.ingredient_id))) * Number(it.qty), 0).toFixed(2)} บาท</span>
-                </div>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label className="text-xs font-bold text-slate-600 mb-1 block">ราคาหน้าร้าน</label><input type="number" placeholder="60" value={basePrice} onChange={(e) => setBasePrice(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm outline-none font-medium" /></div>
-                  <div><label className="text-xs font-bold text-slate-600 mb-1 block">GP เดลิเวอรี (%)</label><input type="number" placeholder="30" value={targetGP} onChange={(e) => setTargetGP(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm outline-none font-medium" /></div>
-                </div>
-                <button onClick={handleSaveRecipeToDB} className="w-full bg-gradient-to-r from-emerald-700 to-teal-800 text-white font-bold py-3 rounded-xl text-sm shadow">💾 บันทึกสูตรนี้</button>
-              </div>
-            </div>
-
-            <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
-              <div className="flex flex-col md:flex-row justify-between items-center gap-3 border-b border-slate-300 pb-3">
-                <h3 className="font-bold text-lg text-slate-800">📋 สูตรทั้งหมด ({filteredRecipes.length} จาก {recipesList.length} เมนู)</h3>
-                
-                <div className="flex gap-2 w-full md:w-auto">
-                  <input type="text" placeholder="🔍 ค้นหาชื่อเมนู..." value={searchRecipeQuery} onChange={(e) => setSearchRecipeQuery(e.target.value)} className="bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs outline-none font-medium w-full md:w-40" />
-                  <select value={recipeFilterCat} onChange={(e) => setRecipeFilterCat(e.target.value)} className="bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs outline-none font-bold text-slate-700 cursor-pointer shadow-sm">
-                    {RECIPE_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredRecipes.length > 0 ? filteredRecipes.map(rec => {
-                  const mType = selectedMilkTypes[rec.id] || 'fresh';
-                  const cogs = calculateRecipeCost(rec, mType);
-                  const storePrice = Number(rec.base_price) || 0;
-                  const gp = Number(rec.target_gp) || 30;
-                  const storeProfit = storePrice > 0 ? storePrice - cogs : 0;
-                  const recDelivery = storePrice > 0 && gp < 100 ? storePrice / (1 - gp / 100) : 0;
-                  const netDeliveryProfit = recDelivery * (1 - gp / 100) - cogs;
-                  const autoCat = getRecipeCategory(rec.menu_name);
-
-                  return (
-                    <div key={rec.id} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-3">
-                      <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                        <div>
-                          <h4 className="font-bold text-slate-900 text-base">🥤 {rec.menu_name}</h4>
-                          <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">{autoCat}</span>
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => setEditingRecipeModal(JSON.parse(JSON.stringify(rec)))} className="bg-amber-600 text-white text-xs px-2.5 py-1 rounded-lg font-bold">✏️ แก้ไข</button>
-                          <button onClick={() => handleDeleteRecipe(rec.id)} className="bg-red-600 text-white text-xs px-2.5 py-1 rounded-lg font-bold">🗑️ ลบ</button>
-                        </div>
-                      </div>
-
-                      {/* ตัวเลือกนม */}
-                      {rec.has_milk_option && (
-                        <div className="bg-amber-50 border border-amber-200 p-2 rounded-xl flex items-center justify-between text-xs">
-                          <span className="font-bold text-amber-900">🥛 นม:</span>
-                          <div className="flex gap-1">
-                            {[['fresh', 'Fresh'], ['oat', 'Oat'], ['almond', 'Almond']].map(([k, l]) => (
-                              <button key={k} onClick={() => setSelectedMilkTypes({ ...selectedMilkTypes, [rec.id]: k })} className={`px-2 py-1 rounded-lg font-bold border ${mType === k ? 'bg-slate-800 text-white' : 'bg-white text-slate-700'}`}>{l}</button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="text-xs space-y-2 text-slate-600">
-                        <div className="flex justify-between"><span>COGS:</span><span className="font-bold text-red-600">{cogs.toFixed(2)} ฿</span></div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="bg-slate-50 p-2.5 rounded-lg border">
-                            <p className="font-bold text-slate-700 text-[11px]">🏪 หน้าร้าน</p>
-                            <p>ราคา: {storePrice} ฿</p>
-                            <p>กำไร: <span className="font-bold text-emerald-700">{storeProfit.toFixed(2)} ฿</span></p>
-                          </div>
-                          <div className="bg-emerald-50/70 p-2.5 rounded-lg border">
-                            <p className="font-bold text-emerald-900 text-[11px]">🛵 เดลิเวอรี ({gp}%)</p>
-                            <p>ควรขาย: {Math.ceil(recDelivery)} ฿</p>
-                            <p>กำไร: <span className="font-bold text-emerald-700">{netDeliveryProfit.toFixed(2)} ฿</span></p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                }) : <p className="text-xs text-slate-400 text-center py-8 col-span-2">ไม่พบสูตรเครื่องดื่มตามหมวดหมู่หรือคำค้นหานี้</p>}
-              </div>
-            </div>
+          <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🥤 สูตรเครื่องดื่ม & GP</h2>
+            <p className="text-xs text-slate-500">จัดการสูตรเครื่องดื่ม คำนวณต้นทุน และราคาเดลิเวอรี</p>
           </div>
         </div>
 
+        {/* Tab 4: Messages */}
         <div className={activeTab === 'messages' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📥 เรื่องที่พนักงานแจ้งเข้ามา ({staffMessages.length})</h2>
-            <div className="space-y-3">
-              {staffMessages.length > 0 ? staffMessages.map(msg => (
-                <div key={msg.id} onClick={() => markMessageRead(msg)} className={`p-4 rounded-xl border shadow-sm space-y-2 cursor-pointer transition hover:shadow-md ${msg.is_read ? 'bg-white border-slate-300' : 'bg-blue-50 border-blue-300 border-l-4 border-l-blue-600'}`}>
-                  <div className="flex justify-between items-center gap-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      {!msg.is_read && <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>}
-                      <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">{msg.topic || 'ทั่วไป'}</span>
-                      <span className="font-bold text-slate-900 text-sm">👤 {msg.staff_name}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-400">{formatTime(msg.created_at)}</span>
-                      <span className={`text-xs font-bold px-2 py-1 rounded-lg border ${msg.is_read ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-amber-50 text-amber-700 border-amber-300'}`}>
-                        {msg.is_read ? '✓ อ่านแล้ว' : '⏳ รออ่าน (คลิกเพื่อดู)'}
-                      </span>
-                    </div>
-                  </div>
-                  <p className="text-sm text-slate-700 line-clamp-2">{msg.message}</p>
-                </div>
-              )) : <p className="text-center py-8 text-slate-400 font-medium">ไม่มีข้อความจากพนักงาน</p>}
-            </div>
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">📥 ข้อความจากพนักงาน</h2>
           </div>
         </div>
 
+        {/* Tab 5: Internal Chat */}
         <div className={activeTab === 'internal_chat' ? 'block' : 'hidden'}>
           <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
-            <div className="border-b border-slate-300 pb-3 flex justify-between items-center flex-wrap gap-2">
-              <div>
-                <h2 className="font-bold text-lg text-slate-800">💬 Internal Message (ห้องแชทเจ้าของ/หุ้นส่วน)</h2>
-                <p className="text-xs text-slate-500">สื่อสารอัปเดตงาน ส่งรูป/ไฟล์ได้ (ระบบเก็บข้อมูลย้อนหลัง 3 เดือน)</p>
-              </div>
-              <input type="text" placeholder="ชื่อของคุณ เช่น พี่เอ" value={ownerName} onChange={(e) => setOwnerName(e.target.value)} className="bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs outline-none font-bold w-40 shadow-sm" />
-            </div>
-
-            <div className="bg-white rounded-2xl border border-slate-300 p-4 h-[420px] overflow-y-auto flex flex-col gap-3 shadow-inner">
-              {internalMsgs.length > 0 ? internalMsgs.map(m => {
-                const isMine = ownerName.trim() !== '' && m.author === ownerName.trim();
-                return (
-                  <div key={m.id} className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
-                    <span className="text-[10px] font-bold text-slate-500 px-1 mb-0.5">{m.author}</span>
-                    <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 shadow-sm space-y-2 ${isMine ? 'bg-slate-800 text-white rounded-br-sm' : 'bg-slate-100 text-slate-800 border border-slate-200 rounded-bl-sm'}`}>
-                      {m.message && <p className="text-sm whitespace-pre-wrap break-words">{m.message}</p>}
-                      {m.file_url && m.file_type === 'image' && (
-                        <a href={m.file_url} target="_blank" rel="noopener noreferrer" className="block max-w-xs rounded-lg overflow-hidden border border-slate-300">
-                          <img src={m.file_url} alt="chat-img" className="w-full h-auto object-cover max-h-48" />
-                        </a>
-                      )}
-                      {m.file_url && m.file_type !== 'image' && (
-                        <a href={m.file_url} target="_blank" rel="noopener noreferrer" className={`block text-xs font-bold underline p-2 rounded-lg border ${isMine ? 'bg-slate-700 text-blue-200 border-slate-600' : 'bg-white text-blue-600 border-slate-200'}`}>
-                          📎 เปิดดูไฟล์แนบ
-                        </a>
-                      )}
-                      <p className={`text-[9px] text-right ${isMine ? 'text-slate-300' : 'text-slate-400'}`}>{formatTime(m.created_at)}</p>
-                    </div>
-                  </div>
-                );
-              }) : <p className="text-center text-xs text-slate-400 py-20">ยังไม่มีข้อความในห้องแชท เริ่มพูดคุยกันได้เลย</p>}
-            </div>
-
-            <form onSubmit={(e) => { e.preventDefault(); handleSendChat(); }} className="flex gap-2">
-              <input type="file" id="chatFile" onChange={handleChatFileUpload} disabled={uploadingChatFile} className="hidden" />
-              <label htmlFor="chatFile" className="bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-bold px-4 py-2.5 rounded-xl text-sm shadow-sm cursor-pointer flex items-center justify-center shrink-0">
-                📎 {uploadingChatFile ? 'กำลังส่ง...' : 'แนบไฟล์'}
-              </label>
-              <input type="text" placeholder="พิมพ์ข้อความ..." value={chatText} onChange={(e) => setChatText(e.target.value)} className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2.5 text-sm outline-none font-medium shadow-sm" />
-              <button type="submit" className="bg-slate-800 hover:bg-slate-900 text-white font-bold px-6 py-2.5 rounded-xl text-sm shadow transition shrink-0">ส่ง</button>
-            </form>
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">💬 Internal Message</h2>
           </div>
         </div>
 
+        {/* Tab 6: Promotions */}
         <div className={activeTab === 'promotions' ? 'block' : 'hidden'}>
-          <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🏷️ จัดการโปรโมชันและเมนูใหม่</h2>
-            <form onSubmit={handleSavePromotion} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-4">
-              <div><label className="block text-xs font-bold text-slate-600 mb-1">หัวข้อ</label><input type="text" value={promoTitle} onChange={(e) => setPromoTitle(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium" required /></div>
-              <div><label className="block text-xs font-bold text-slate-600 mb-1">รายละเอียด</label><textarea rows="3" value={promoDesc} onChange={(e) => setPromoDesc(e.target.value)} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm outline-none font-medium"></textarea></div>
-              <div><label className="block text-xs font-bold text-slate-600 mb-1">แนบรูป/PDF</label><input type="file" accept="image/*,application/pdf" onChange={handlePromoFileUpload} className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-slate-700 file:text-white cursor-pointer" /></div>
-              <button type="submit" className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm shadow">บันทึกโปรโมชัน</button>
-            </form>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {promotionsList.map(p => (
-                <div key={p.id} className="bg-white p-4 rounded-xl border border-slate-300 shadow-sm space-y-2">
-                  <div className="flex justify-between items-start"><h4 className="font-bold text-sm">{p.title}</h4><button onClick={() => handleDeletePromo(p.id)} className="text-xs text-red-600 font-bold">ลบ</button></div>
-                  <p className="text-xs text-slate-600">{p.description}</p>
-                  {p.file_url && <a href={p.file_url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-blue-600 underline block">🔗 ดูไฟล์แนบ</a>}
-                </div>
-              ))}
-            </div>
+          <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">🏷️ จัดการโปรโมชัน</h2>
           </div>
         </div>
 
+        {/* Tab 7: Staff Logs */}
         <div className={activeTab === 'staff_logs' ? 'block' : 'hidden'}>
-          <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-6">
-            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">ประวัติการทำงานย้อนหลัง (คลิกแถวเพื่อดูรายละเอียดช่องทางและสลิป)</h2>
-            <div className="bg-white rounded-xl border border-slate-300 shadow-sm overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="bg-slate-200 font-bold border-b border-slate-300">
-                    <th className="p-3">วันที่</th>
-                    <th className="p-3">ผู้บันทึก</th>
-                    <th className="p-3 text-center">แก้ว</th>
-                    <th className="p-3 text-right">เงินสด</th>
-                    <th className="p-3 text-right">QR/เดลิเวอรี</th>
-                    <th className="p-3 text-center">ตรวจสอบ</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200 font-medium">
-                  {staffLogs.map(log => {
-                    const totalChannelSum = (Number(log.cash) || 0) + (Number(log.qr) || 0) + (Number(log.grab) || 0) + (Number(log.lineman) || 0) + (Number(log.grabth) || 0) + (Number(log.linemanth) || 0);
-                    return (
-                      <tr key={log.date} onClick={() => setSelectedSaleDetail(log)} className="hover:bg-slate-50 cursor-pointer transition">
-                        <td className="p-3">{log.date}</td>
-                        <td className="p-3 font-bold">{log.staff_name}</td>
-                        <td className="p-3 text-center">{log.total_cups || 0}</td>
-                        <td className="p-3 text-right text-emerald-700 font-bold">{(Number(log.cash) || 0).toLocaleString()} ฿</td>
-                        <td className="p-3 text-right">{totalChannelSum.toLocaleString()} ฿</td>
-                        <td className="p-3 text-center">
-                          <span className="text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-lg font-bold">🔍 ดูสลิป</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+          <div className="bg-slate-100 shadow-2xl rounded-2xl p-6 border border-slate-400 space-y-4">
+            <h2 className="font-bold text-lg text-slate-800 border-b border-slate-300 pb-3">👥 ประวัติย้อนหลัง</h2>
           </div>
         </div>
 
